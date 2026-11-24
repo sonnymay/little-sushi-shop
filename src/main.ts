@@ -11,13 +11,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 <footer>Watch the flow, improve the shop. <span>Prototype artwork · Progress resets on reload</span></footer></main>`;
 const canvas = document.querySelector('canvas')!;
 const ctx = canvas.getContext('2d')!;
-const hana = new Image();
-hana.src = `./art/hana.webp`;
 let sim = new Simulation(), speed = 1;
 const $ = (id: string) => document.getElementById(id)!;
 $('pause').onclick = () => { sim.paused = !sim.paused; $('pause').textContent = sim.paused ? 'Resume' : 'Pause'; };
 $('speed').onclick = () => { speed = speed === 1 ? 3 : 1; $('speed').textContent = `${speed}× speed`; };
-$('restart').onclick = () => { sim = new Simulation(); captions.clear(); $('pause').textContent = 'Pause'; };
+$('restart').onclick = () => { sim = new Simulation(); captions.clear(); headings.clear(); $('pause').textContent = 'Pause'; };
 $('upgrade').onclick = () => sim.buyUpgrade();
 function round(x: number, y: number, w: number, h: number, r: number, fill: string, stroke?: string) {
   ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fillStyle = fill; ctx.fill();
@@ -46,15 +44,21 @@ function sprite(name: keyof typeof sprites, x: number, bottom: number, height: n
   const width = height * sw / sh;
   ctx.drawImage(atlas, sx, sy, sw, sh, x - width / 2, bottom - height, width, height);
 }
-const walking = new Image();
-walking.src = './art/walking.webp';
-const walkRows = { courier: 0, mapmaker: 1, potter: 2, server: 3 } as const;
-type Art = keyof typeof walkRows;
+// Articulated chibi actors: separate limbs, torso and head, not distorted image strips.
+// Coordinates are authored in a 128-unit local rig with the floor as its origin.
+const cast = {
+  courier: { hair: '#6d4535', shirt: '#b97852', pants: '#74685b', skin: '#f5cda5', accent: '#f0d5a3' },
+  mapmaker: { hair: '#403d38', shirt: '#819b85', pants: '#596b68', skin: '#f4cca7', accent: '#e9e1bc' },
+  potter: { hair: '#805748', shirt: '#c78883', pants: '#77647a', skin: '#e9b68d', accent: '#f7e2cc' },
+  server: { hair: '#493c33', shirt: '#547b73', pants: '#514c45', skin: '#f6d0aa', accent: '#f9e9c9' },
+} as const;
+type Art = keyof typeof cast;
 type Pose = ReturnType<typeof sampleTravel>;
 type Layer = { y: number; draw: () => void };
 type Label = { x: number; y: number; value: string; opacity: number };
 const captions = new Map<string, { value: string; since: number }>();
 const strides = new WeakMap<object, { edge?: Travel; base: number }>();
+const headings = new Map<string, { dx: number; dy: number }>();
 
 function strideDistance(actor: object, edge: Travel | undefined, pose: Pose) {
   const last = strides.get(actor);
@@ -68,79 +72,110 @@ function strideDistance(actor: object, edge: Travel | undefined, pose: Pose) {
 }
 
 function shadow(x: number, y: number, width: number) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(width, width * 0.27);
+  ctx.save(); ctx.translate(x, y); ctx.scale(width, width * 0.27);
   const shade = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
   shade.addColorStop(0, '#553c3260'); shade.addColorStop(1, '#553c3200');
-  ctx.fillStyle = shade; ctx.fillRect(-1, -1, 2, 2);
-  ctx.restore();
+  ctx.fillStyle = shade; ctx.fillRect(-1, -1, 2, 2); ctx.restore();
 }
 
-// Deform the existing artwork from the waist down. All offsets are in canvas
-// units so the planted foot counters the body's actual screen displacement.
-function gait(art: Art, pose: Pose, distance: number, height: number, bottom: number) {
-  const scale = height / 160, step = height * 0.135;
-  const motion = pose.moving ? 1 : 0;
-  const breath = Math.sin(sim.visualTick * 0.22) * 0.7;
-  const bob = motion ? -1.6 * Math.sin(Math.PI * distance / step) ** 2 : breath;
-  const column = pose.dy < 0 ? 4 : pose.dx ? 2 : 0;
-  const sx = column * 116, sy = walkRows[art] * 160;
-  ctx.save();
-  ctx.translate(pose.x, bottom);
-  if (pose.dx < 0) ctx.scale(-1, 1);
-  ctx.scale(scale, scale);
-  const torso = bob / scale;
-  if (!pose.moving) {
-    // Anchor the soles as the chest rises and falls.
-    ctx.drawImage(walking, sx, sy, 116, 160, -58, -160 + torso, 116, 160 - torso);
-    ctx.restore();
-    return;
-  }
-  ctx.drawImage(walking, sx, sy, 116, 58, -58, -160 + torso, 116, 58);
-  for (let side = 0; side < 2; side++) {
-    const limb = foot(distance, step, side === 1);
-    function offset(row: number) {
-      const leg = smooth((row - 101) / 55);
-      const arm = Math.sin(Math.PI * clamp((row - 58) / 47));
-      const swing = motion * limb.reach / scale;
-      return {
-        x: Math.abs(pose.dx) * swing * leg - swing * arm * 0.22,
-        y: torso * (1 - leg) + motion * (pose.dy * limb.reach - limb.lift) / scale * leg,
-      };
-    }
-    // Each horizontal strip meets its neighbour at the same displaced boundary.
-    for (let row = 58; row < 160; row += 3) {
-      const end = Math.min(row + 3, 160), a = offset(row), b = offset(end);
-      const x = side * 58;
-      // Keep the garment joined along the centre seam above the knees.
-      const seam = a.x * smooth((row - 120) / 18);
-      const left = side === 0 ? a.x : seam;
-      const right = side === 0 ? seam : a.x;
-      ctx.drawImage(walking, sx + x, sy + row, 58, end - row,
-        x - 58 + left, row - 160 + a.y, 58 + right - left, end - row + b.y - a.y + 0.4);
-    }
-  }
-  ctx.restore();
+type Joint = { x: number; y: number };
+function bone(a: Joint, b: Joint, width: number, color: string) {
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  ctx.strokeStyle = '#594438'; ctx.lineWidth = width + 2; ctx.stroke();
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
 }
-
-function drawActor(art: Art, pose: Pose, distance: number, sitting: number) {
-  const height = adultHeight * depthScale(pose.y), bottom = pose.y + 8 + 16 * sitting;
+function drawActor(art: Art, pose: Pose, distance: number, sitting: number,
+  action: 'idle' | 'carry' | 'eat' | 'clean' | 'cook' = 'idle', plate?: number) {
+  const palette = cast[art], height = adultHeight * depthScale(pose.y);
+  const s = height / 128, tick = sim.visualTick;
+  const side = pose.dx !== 0, back = !side && pose.dy < 0;
+  const dir = pose.dx < 0 ? -1 : 1;
+  const walking = pose.moving && sitting < 0.01;
+  const step = 18 * s;
+  const breath = Math.sin(tick * 0.28 + (art.length * 0.9)) * 0.8;
+  const bob = walking ? -2.4 * Math.sin(Math.PI * distance / step) ** 2 : breath;
+  const hipY = -38 + sitting * 18 + bob;
+  const shoulderY = hipY - 37;
+  const headY = shoulderY - 23;
+  const activity = Math.sin(tick * 0.8);
+  const blink = (tick + art.length * 13) % 49 < 1.5;
   shadow(pose.x, pose.y + 7, height * 0.22);
-  const ready = walking.complete && walking.naturalWidth > 0;
-  ctx.save();
-  if (sitting > 0) {
-    ctx.beginPath();
-    ctx.rect(pose.x - height, bottom - height - 3, height * 2, height * (1 - 0.28 * sitting) + 3);
-    ctx.clip();
+  ctx.save(); ctx.translate(pose.x, pose.y + 8); ctx.scale(s * dir, s);
+
+  function leg(i: number) {
+    const sign = i === 0 ? -1 : 1;
+    const stride = walking ? foot(distance, step, i === 1) : { reach: 0, lift: 0 };
+    const spread = side ? 5 : 10;
+    const hip = { x: sign * spread, y: hipY };
+    const ankle = { x: sign * spread + (side ? stride.reach / s + sitting * 16 : 0),
+      y: -5 - stride.lift / s + (!side ? pose.dy * stride.reach / s * 0.48 : 0) };
+    const knee = { x: (hip.x + ankle.x) / 2 + (side ? 4 + sitting * 9 : sign * 2 * sitting),
+      y: (hip.y + ankle.y) / 2 - sitting * 6 };
+    bone(hip, knee, 15, palette.pants); bone(knee, ankle, 12, palette.pants);
+    ellipse(ankle.x + (side ? 4 : 0), ankle.y + 2, side ? 11 : 8, 5, '#594438');
+    ellipse(ankle.x + (side ? 4 : 0), ankle.y, side ? 9 : 7, 4, '#faf0d8');
   }
-  if (ready && sitting < 1) {
-    ctx.globalAlpha = 1 - sitting;
-    gait(art, pose, distance, height, bottom);
+  function arm(i: number) {
+    const sign = i === 0 ? -1 : 1;
+    const stride = walking ? foot(distance, step, i !== 1).reach / s : 0;
+    const shoulder = { x: sign * (side ? 9 : 20), y: shoulderY + 5 };
+    let hand = { x: shoulder.x + (side ? stride * 0.8 : sign * 4), y: shoulder.y + 30 };
+    if (action === 'carry') hand = { x: side ? 29 : sign * 15, y: shoulder.y + 16 };
+    if (action === 'eat') hand = { x: side ? 17 : sign * 12, y: shoulder.y + 12 - 15 * (0.5 + 0.5 * activity) };
+    if (action === 'clean' || action === 'cook') hand = { x: (side ? 24 : sign * 14) + activity * 7, y: shoulder.y + 23 + activity * 3 };
+    const elbow = { x: (shoulder.x + hand.x) / 2 + (side ? -5 : sign * 5), y: (shoulder.y + hand.y) / 2 + 3 };
+    bone(shoulder, elbow, 13, palette.shirt); bone(elbow, hand, 9, palette.skin);
+    ellipse(hand.x, hand.y, 6, 6, palette.skin);
   }
-  if (!ready || sitting > 0) {
-    ctx.globalAlpha = ready ? sitting : 1;
-    sprite(art, pose.x, bottom, height + 0.7 * Math.sin(sim.visualTick * 0.22));
+  // Far limbs are occluded by the torso; near limbs overlap it.
+  leg(0); leg(1); arm(0);
+  round(-20, shoulderY, 40, hipY - shoulderY + 6, 13, palette.shirt, '#594438');
+  if (art === 'server' && !back) {
+    round(-13, shoulderY + 14, 26, 29, 5, palette.accent);
+    bone({ x: -10, y: shoulderY + 1 }, { x: -10, y: shoulderY + 18 }, 4, palette.accent);
+    bone({ x: 10, y: shoulderY + 1 }, { x: 10, y: shoulderY + 18 }, 4, palette.accent);
+    round(-7, shoulderY + 28, 14, 8, 2, '#e5cda5');
+  } else if (!back) {
+    bone({ x: -10, y: shoulderY + 2 }, { x: 0, y: shoulderY + 10 }, 3, palette.accent);
+    bone({ x: 10, y: shoulderY + 2 }, { x: 0, y: shoulderY + 10 }, 3, palette.accent);
+  }
+  arm(1);
+  // Head has its own pivot and independent expression.
+  ctx.save(); ctx.translate(0, headY);
+  ctx.rotate(walking ? Math.sin(distance / step * Math.PI) * 0.035 : activity * 0.012);
+  ellipse(0, 0, 27, 27, '#594438');
+  ellipse(0, -2, 25, 25, palette.hair);
+  if (!back) {
+    ellipse(side ? 7 : 0, 6, side ? 21 : 23, 20, palette.skin);
+    ellipse(side ? -17 : -24, 7, 5, 7, palette.skin);
+    if (!side) ellipse(24, 7, 5, 7, palette.skin);
+    ellipse(side ? -6 : -8, -14, 17, 11, palette.hair);
+    if (art === 'potter') ellipse(-18, -17, 11, 12, palette.hair);
+    const eyes = side ? [12] : [-9, 9];
+    for (const x of eyes) {
+      ellipse(x, 5, 2.7, blink ? 0.7 : 4, '#493c33');
+      if (!blink) ellipse(x + 0.7, 4, 0.9, 1, '#fff9eb');
+      ellipse(x + (side ? 3 : 0), 13, 4, 2, '#e8a398');
+    }
+    ctx.beginPath(); ctx.arc(side ? 15 : 0, 14, 3, 0.15, Math.PI - 0.15);
+    ctx.strokeStyle = '#945e54'; ctx.lineWidth = 1.5; ctx.stroke();
+  } else {
+    ellipse(-8, -5, 13, 18, palette.hair);
+    ellipse(8, -5, 13, 18, palette.hair);
+  }
+  if (art === 'server' || action === 'cook') {
+    round(-22, -23, 44, 9, 4, '#f9e9c9', '#594438');
+    if (action === 'cook') { ellipse(-12, -28, 13, 12, '#fff3d8'); ellipse(9, -29, 15, 13, '#fff3d8'); }
+  }
+  ctx.restore();
+  if (action === 'carry' && plate !== undefined) {
+    // Dish shares the hand's rig coordinates instead of floating beside the actor.
+    sprite(dishes[plate], side ? 29 : 0, shoulderY + 19, 23);
+  }
+  if (action === 'cook') {
+    round(-18 + activity * 6, shoulderY + 21, 20, 5, 2, '#f4dbc2');
+    round(-3 + activity * 7, shoulderY + 12 + activity * 3, 18, 4, 1, '#a8b5b4');
   }
   ctx.restore();
 }
@@ -177,13 +212,7 @@ function render() {
   for (const x of [95, 745]) { round(x, 70, 155, 135, 10, '#cda47f'); round(x + 9, 79, 137, 117, 5, '#f6f0d6'); for (let i = 1; i < 4; i++) round(x + 9 + i * 32, 79, 4, 117, 1, '#d4b48d'); round(x + 9, 135, 137, 4, 1, '#d4b48d'); }
   round(340, 58, 320, 78, 14, '#46645c'); text('Little Sushi Shop', 500, 106, 28, '#fff3d8');
   for (const x of [290, 710]) { round(x - 1, 38, 2, 88, 1, '#ae8d66'); ellipse(x, 146, 24, 32, '#f1bd81'); text('寿', x, 153, 22, '#945e44'); }
-  if (hana.complete && hana.naturalWidth) {
-    const height = adultHeight * depthScale(260) * 0.58;
-    const width = height * hana.naturalWidth / hana.naturalHeight;
-    shadow(500, 256, 22);
-    const bob = Math.sin(sim.visualTick * (sim.chef ? 0.36 : 0.22)) * (sim.chef ? 2 : 0.7);
-    ctx.drawImage(hana, 500 - width / 2, 258 - height + bob, width, height);
-  }
+  drawActor('server', { x: 500, y: 267, dx: 0, dy: 1, moving: false, along: 0 }, 0, 0, sim.chef ? 'cook' : 'idle');
   round(205, 265, 590, 55, 17, '#bb815c', '#9c6a4d'); round(192, 250, 616, 34, 16, '#dfb187', '#a87754');
   for (let i = 0; i < 3; i++) sprite(dishes[i], 315 + i * 90, 270, plateHeight * depthScale(260));
   text('PICKUP', 675, 273, 12, '#805744');
@@ -201,17 +230,15 @@ function render() {
     } });
   }
   const live = new Set<string>();
-  function actor(id: string, entity: { position: Point }, art: Art, value: string, sitting = 0, plate?: number) {
+  function actor(id: string, entity: { position: Point }, art: Art, value: string, sitting = 0, plate?: number, action: 'idle' | 'eat' | 'clean' = 'idle') {
     const edge = sim.travel.get(entity);
-    const pose = sampleTravel(entity.position, edge, sim.visualTick);
+    const sample = sampleTravel(entity.position, edge, sim.visualTick);
+    if (sample.moving) headings.set(id, { dx: sample.dx, dy: sample.dy });
+    const pose = sitting > 0 ? { ...sample, dx: 0, dy: 1 } : { ...sample, ...(!sample.moving ? headings.get(id) : undefined) };
     const distance = strideDistance(entity, edge, pose);
     live.add(id); caption(labels, id, value, pose);
     layers.push({ y: pose.y + 8 + 16 * sitting, draw: () => {
-      drawActor(art, pose, distance, sitting);
-      if (plate !== undefined) {
-        const scale = depthScale(pose.y);
-        sprite(dishes[plate], pose.x + (pose.dx < 0 ? -27 : 27) * scale, pose.y + 8 - adultHeight * scale * 0.52, plateHeight * scale);
-      }
+      drawActor(art, pose, distance, sitting, plate !== undefined ? 'carry' : action, plate);
     } });
   }
   for (const [index, guest] of sim.arrivals.entries()) {
@@ -226,15 +253,15 @@ function render() {
     if (c.state === 'eating') sitting = 1;
     if (c.state === 'leaving' && inChair) sitting = 1 - smooth(elapsed / 4);
     const status = c.state === 'waiting' ? recipes[c.recipe].name : c.state === 'eating' ? 'So delicious!' : c.personality;
-    actor(String(c.id), c, guests[(c.id - 1) % guests.length], status, sitting);
+    actor(String(c.id), c, guests[(c.id - 1) % guests.length], status, sitting, undefined, c.state === 'eating' ? 'eat' : 'idle');
   }
   const server = sim.server, task = server.task;
   const plate = task?.kind === 'deliver' && server.phase === 'target'
     ? sim.customers.find(c => c.id === task.target)?.recipe : undefined;
-  actor('server', server, 'server', task?.kind === 'clean' ? 'Mochi · tidying' : task ? 'Mochi · serving' : 'Mochi · ready', 0, plate);
+  actor('server', server, 'server', task?.kind === 'clean' ? 'Mochi · tidying' : task ? 'Mochi · serving' : 'Mochi · ready', 0, plate, task?.kind === 'clean' && server.phase === 'target' ? 'clean' : 'idle');
   for (const layer of layers.sort((a, b) => a.y - b.y)) layer.draw();
   drawLabels(labels);
-  for (const id of captions.keys()) if (!live.has(id)) captions.delete(id);
+  for (const id of captions.keys()) if (!live.has(id)) { captions.delete(id); headings.delete(id); }
   $('coins').textContent = `${sim.coins} coins`; $('served').textContent = `${sim.served} served`;
   const seconds = Math.floor(sim.ticks / 10); $('clock').textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
   $('activity').textContent = sim.paused ? 'Taking a little break' : `${sim.customers.length} inside · ${sim.arrivals.length} in line`;
