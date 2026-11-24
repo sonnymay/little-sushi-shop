@@ -1,0 +1,64 @@
+name: Gameplay preview
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Record real-time gameplay
+        shell: bash
+        run: |
+          mkdir -p gameplay-preview
+          npm run preview -- --host 127.0.0.1 --port 4173 > /tmp/sushi-preview.log 2>&1 &
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:4173/ > /dev/null; then break; fi
+            sleep 1
+          done
+          node --input-type=module <<'JS'
+          import { chromium } from '@playwright/test';
+          import { mkdir } from 'node:fs/promises';
+          await mkdir('gameplay-preview', { recursive: true });
+          const browser = await chromium.launch({ headless: true });
+          try {
+            const context = await browser.newContext({
+              viewport: { width: 1440, height: 1100 },
+              recordVideo: { dir: 'gameplay-preview', size: { width: 1440, height: 1100 } },
+            });
+            const page = await context.newPage();
+            const video = page.video();
+            const errors = [];
+            page.on('pageerror', error => errors.push(error.message));
+            await page.goto('http://127.0.0.1:4173/');
+            await page.locator('canvas').waitFor({ state: 'visible' });
+            await page.waitForTimeout(35000);
+            await context.close();
+            await video.saveAs('gameplay-preview/little-sushi-shop.webm');
+            await video.delete();
+            if (errors.length) throw new Error(errors.join('; '));
+          } finally {
+            await browser.close();
+          }
+          JS
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -y -i gameplay-preview/little-sushi-shop.webm -c:v libx264 -pix_fmt yuv420p -movflags +faststart gameplay-preview/little-sushi-shop.mp4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: little-sushi-shop-gameplay
+          path: gameplay-preview/little-sushi-shop.*
+          if-no-files-found: warn
