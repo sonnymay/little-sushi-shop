@@ -1,3 +1,4 @@
+import { advancePose, walkColumn, type WalkPose } from './walking';
 import { Simulation, recipes } from './simulation';
 import type { Point } from './navigation';
 import './style.css';
@@ -24,7 +25,7 @@ function round(x: number, y: number, w: number, h: number, r: number, fill: stri
 }
 function ellipse(x: number, y: number, rx: number, ry: number, color: string) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); }
 function text(value: string, x: number, y: number, size = 16, color = '#695044') { ctx.font = `600 ${size}px system-ui`; ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.fillText(value, x, y); }
-const drawn = new Map<string, Point>();
+const drawn = new Map<string, WalkPose>();
 const atlas = new Image();
 atlas.src = './art/shop-cast.webp';
 // Tight source rectangles in the transparent atlas, in pixels.
@@ -45,12 +46,15 @@ function sprite(name: keyof typeof sprites, x: number, bottom: number, height: n
   const width = height * sw / sh;
   ctx.drawImage(atlas, sx, sy, sw, sh, x - width / 2, bottom - height, width, height);
 }
-function character(id: string, position: Point, art: keyof typeof sprites, label: string, seated = false) {
-  const target = world(position), old = drawn.get(id) ?? target;
-  const x = old.x + (target.x - old.x) * 0.18, y = old.y + (target.y - old.y) * 0.18;
-  drawn.set(id, { x, y });
-  const moving = Math.hypot(target.x - x, target.y - y) > 1;
-  const bob = Math.sin(sim.ticks * (moving ? 0.7 : 0.18) + target.x) * (moving ? 2.2 : 0.7);
+const walking = new Image();
+walking.src = './art/walking.webp';
+const walkRows = { courier: 0, mapmaker: 1, potter: 2, server: 3 } as const;
+let frameSeconds = 0;
+function character(id: string, position: Point, art: keyof typeof walkRows, label: string, seated = false) {
+  const pose = advancePose(drawn.get(id), world(position), frameSeconds);
+  drawn.set(id, pose);
+  const { x, y } = pose;
+  const bob = pose.moving ? -Math.abs(Math.sin(pose.distance * Math.PI / 21)) * 1.5 : 0;
   const height = adultHeight * depthScale(y);
   // Lower the hips onto the cushion while preserving the size of the head.
   const bottom = y + (seated ? 24 : 8);
@@ -61,7 +65,12 @@ function character(id: string, position: Point, art: keyof typeof sprites, label
     ctx.rect(x - height / 2, bottom - height - 4, height, height * 0.72);
     ctx.clip();
   }
-  sprite(art, x, bottom + bob, height);
+  if (!seated && walking.complete && walking.naturalWidth && (pose.moving || pose.facing !== 'down')) {
+    const width = height * 116 / 160;
+    ctx.translate(x, bottom + bob);
+    if (pose.facing === 'left') ctx.scale(-1, 1);
+    ctx.drawImage(walking, walkColumn(pose) * 116, walkRows[art] * 160, 116, 160, -width / 2, -height, width, height);
+  } else sprite(art, x, bottom, height);
   ctx.restore();
   round(x - 51, bottom - height - 22, 102, 18, 9, '#fffdf4ef');
   text(label, x, bottom - height - 9, 10);
@@ -114,7 +123,7 @@ function render() {
     if (task?.kind === 'deliver' && sim.server.phase === 'target') {
       const customer = sim.customers.find(c => c.id === task.target);
       const hand = drawn.get('server')!;
-      if (customer) sprite(dishes[customer.recipe], hand.x + 27 * depthScale(hand.y), hand.y + 8 - adultHeight * depthScale(hand.y) * 0.52, plateHeight * depthScale(hand.y));
+      if (customer) sprite(dishes[customer.recipe], hand.x + (hand.facing === 'left' ? -27 : 27) * depthScale(hand.y), hand.y + 8 - adultHeight * depthScale(hand.y) * 0.52, plateHeight * depthScale(hand.y));
     }
   } });
   for (const layer of layers.sort((a, b) => a.y - b.y)) layer.draw();
@@ -128,5 +137,5 @@ function render() {
   $('events').innerHTML = sim.events.map(event => `<li>${event}</li>`).join('');
 }
 let previous = performance.now();
-function frame(now: number) { sim.advance(Math.min((now - previous) / 1000, 0.2) * speed); previous = now; render(); requestAnimationFrame(frame); }
+function frame(now: number) { frameSeconds = sim.paused ? 0 : Math.min((now - previous) / 1000, 0.2) * speed; sim.advance(frameSeconds); previous = now; render(); requestAnimationFrame(frame); }
 requestAnimationFrame(frame);
