@@ -71,13 +71,20 @@ export class Simulation {
       }
     }
     if (this.arrivals.length && this.customers.length < 3) {
-      const index = this.seats.findIndex(s => s.owner === null && !s.dirty && pathfind(entrance, s.position) !== null);
+      // Dreamers like the window, foodies watch the chef, and regulars have a usual table.
+      const favorites = [0, 1, 2];
+      const favorite = favorites[(this.arrivals[0].id - 1) % favorites.length];
+      const available = (s: Seat) => s.owner === null && !s.dirty && pathfind(entrance, s.position) !== null;
+      const index = available(this.seats[favorite]) ? favorite : this.seats.findIndex(available);
       if (index >= 0) {
         const { id } = this.arrivals.shift()!;
         const recipe = (id - 1) % recipes.length;
         this.seats[index].owner = id;
         this.customers.push({ id, seat: index, position: { ...entrance }, state: 'walking', timer: 0, patience: 600 + recipe * 100, recipe, personality: ['Dreamer', 'Foodie', 'Regular'][recipe] });
-        this.log(`${['Dreamer', 'Foodie', 'Regular'][recipe]} #${id} found a seat.`);
+        const moment = index === favorite
+          ? ['A window seat. The dreamer watches the afternoon light.', 'Front row! The foodie watches Hana shape the rice.', 'The regular settles into their usual spot.'][recipe]
+          : 'A change of scenery today!';
+        this.log(`Table ${index + 1}: ${moment}`);
       }
     }
     for (const c of this.customers) {

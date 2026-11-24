@@ -24,7 +24,7 @@ npm run test:e2e
 - Pause, restart and 3× speed controls. Reloading resets progress.
 - Original rounded vector-style placeholder characters and warm Japanese shop setting; no pixel art.
 
-This is a functional foundation, **not the finished polished art release**. Personalities currently affect recipe choice, eating duration and patience only. There is no layout editor, save system, sound or collision avoidance between characters. NPCs can pass each other; navigation avoids furniture. Orders are placed upon seating, without a waiter order-taking visit. Up to three guests wait by the entrance. Clean seats go to the longest-waiting guest. Guests leave after 24 simulated seconds in line or turn away if the line is full.
+This is a functional foundation, **not the finished polished art release**. Personalities currently affect seat preference, recipe choice, eating duration and patience. There is no layout editor, save system, sound or collision avoidance between characters. NPCs can pass each other; navigation avoids furniture. Orders are placed upon seating, without a waiter order-taking visit. Up to three guests wait by the entrance. Clean seats go to the longest-waiting guest. Guests leave after 24 simulated seconds in line or turn away if the line is full.
 
 ## Architecture
 
