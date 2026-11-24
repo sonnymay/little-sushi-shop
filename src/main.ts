@@ -25,25 +25,35 @@ function round(x: number, y: number, w: number, h: number, r: number, fill: stri
 function ellipse(x: number, y: number, rx: number, ry: number, color: string) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); }
 function text(value: string, x: number, y: number, size = 16, color = '#695044') { ctx.font = `600 ${size}px system-ui`; ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.fillText(value, x, y); }
 const drawn = new Map<string, Point>();
-function character(id: string, position: Point, color: string, label: string, chef = false, carrying = false) {
-  const target = world(position), old = drawn.get(id) ?? target;
-  const p = { x: old.x + (target.x - old.x) * 0.18, y: old.y + (target.y - old.y) * 0.18 };
-  drawn.set(id, p);
-  const bob = sim.paused ? 0 : Math.sin(sim.ticks * 0.22 + p.x) * 1.4;
-  const x = p.x, y = p.y + bob;
-  ellipse(x, y + 8, 22, 7, '#614a3a22');
-  round(x - 15, y - 24, 30, 32, 13, color, '#74554c');
-  ellipse(x - 8, y + 7, 7, 4, '#654d43'); ellipse(x + 8, y + 7, 7, 4, '#654d43');
-  ellipse(x, y - 42, 23, 23, '#69473f'); ellipse(x, y - 38, 22, 20, '#ffdfbc');
-  ellipse(x - 8, y - 39, 2.3, 3, '#493b36'); ellipse(x + 8, y - 39, 2.3, 3, '#493b36');
-  ellipse(x - 15, y - 32, 5, 2.5, '#efa49b'); ellipse(x + 15, y - 32, 5, 2.5, '#efa49b');
-  ctx.beginPath(); ctx.arc(x, y - 34, 5, 0.2, Math.PI - 0.2); ctx.strokeStyle = '#93685d'; ctx.lineWidth = 1.5; ctx.stroke();
-  if (chef) { round(x - 22, y - 68, 44, 18, 8, '#fff9ed', '#c6b8a4'); ellipse(x - 12, y - 68, 11, 10, '#fff9ed'); ellipse(x + 2, y - 72, 12, 12, '#fff9ed'); ellipse(x + 15, y - 68, 10, 10, '#fff9ed'); }
-  else { ctx.beginPath(); ctx.arc(x, y - 44, 23, Math.PI, 2 * Math.PI); ctx.fillStyle = '#69473f'; ctx.fill(); }
-  if (carrying) sushi(x + 22, y - 18, '#ef947f');
-  round(x - 53, y - 103, 106, 24, 12, '#fffdf4ed'); text(label, x, y - 86, 11);
+const atlas = new Image();
+atlas.src = './art/shop-cast.webp';
+// Tight source rectangles in the transparent atlas, in pixels.
+const sprites = {
+  courier: [33, 2, 173, 252], mapmaker: [270, 2, 180, 252], potter: [537, 2, 126, 252],
+  server: [43, 258, 153, 252], table: [242, 317, 236, 133], chair: [493, 258, 213, 252],
+  salmon: [2, 554, 236, 172], tuna: [242, 553, 236, 173], california: [482, 556, 236, 168],
+} as const;
+const guests = ['courier', 'mapmaker', 'potter'] as const;
+const dishes = ['salmon', 'tuna', 'california'] as const;
+function sprite(name: keyof typeof sprites, x: number, bottom: number, height: number) {
+  if (!atlas.complete || !atlas.naturalWidth) return;
+  const [sx, sy, sw, sh] = sprites[name];
+  const width = height * sw / sh;
+  ctx.drawImage(atlas, sx, sy, sw, sh, x - width / 2, bottom - height, width, height);
 }
-function sushi(x: number, y: number, color: string) { ellipse(x, y + 4, 20, 7, '#fbfaf0'); round(x - 13, y - 6, 26, 11, 5, '#fffdf8'); round(x - 15, y - 10, 30, 8, 5, color); }
+function character(id: string, position: Point, art: keyof typeof sprites, label: string, seated = false) {
+  const target = world(position), old = drawn.get(id) ?? target;
+  const x = old.x + (target.x - old.x) * 0.18, y = old.y + (target.y - old.y) * 0.18;
+  drawn.set(id, { x, y });
+  const moving = Math.hypot(target.x - x, target.y - y) > 1;
+  const bob = Math.sin(sim.ticks * (moving ? 0.7 : 0.18) + target.x) * (moving ? 2.2 : 0.7);
+  const bottom = y + (seated ? 10 : 8);
+  const height = seated ? 91 : 103;
+  ellipse(x, bottom - 1, 22, 6, '#614a3a22');
+  sprite(art, x, bottom + bob, height);
+  round(x - 51, bottom - height - 22, 102, 18, 9, '#fffdf4ef');
+  text(label, x, bottom - height - 9, 10);
+}
 function render() {
   ctx.clearRect(0, 0, 1000, 720);
   round(35, 25, 930, 645, 50, '#efe0c6');
@@ -58,26 +68,38 @@ function render() {
     const width = height * hana.naturalWidth / hana.naturalHeight;
     const bob = sim.chef ? Math.sin(sim.ticks * 0.36) * 2 : 0;
     ctx.drawImage(hana, 500 - width / 2, 254 - height + bob, width, height);
-  } else character('chef', { x: 7, y: 1 }, '#f6f4e9', sim.chef ? 'Hana · preparing' : 'Hana · ready', true);
+  }
   round(205, 265, 590, 55, 17, '#bb815c', '#9c6a4d'); round(192, 250, 616, 34, 16, '#dfb187', '#a87754');
-  for (let i = 0; i < 3; i++) sushi(315 + i * 90, 260, recipes[i].color);
+  for (let i = 0; i < 3; i++) sprite(dishes[i], 315 + i * 90, 272, 31);
   text('PICKUP', 675, 273, 12, '#805744');
   for (const [index, seat] of sim.seats.entries()) {
     const p = world(seat.position);
-    round(p.x - 21, p.y - 8, 42, 28, 12, '#b68b64');
-    round(p.x - 55, p.y - 49, 110, 36, 18, '#d7ab80', '#af8059');
-    ellipse(p.x + 31, p.y - 32, 9, 5, '#a9b795');
+    sprite('chair', p.x, p.y + 10, 61);
     const c = sim.customers.find(c => c.id === seat.owner);
-    if (c?.state === 'eating') sushi(p.x - 14, p.y - 35, recipes[c.recipe].color);
-    else if (seat.dirty) ellipse(p.x - 14, p.y - 32, 18, 6, '#eee5d7');
+    if (c && (c.state === 'waiting' || c.state === 'eating')) {
+      character(String(c.id), c.position, guests[(c.id - 1) % guests.length],
+        c.state === 'waiting' ? recipes[c.recipe].name : 'So delicious!', true);
+    }
+    sprite('table', p.x, p.y + 34, 67);
+    if (c?.state === 'eating') sprite(dishes[c.recipe], p.x - 10, p.y - 7, 24);
+    else if (seat.dirty) ellipse(p.x - 10, p.y - 12, 15, 5, '#eee5d7');
     text(seat.dirty ? 'Cleaning soon' : `Table ${index + 1}`, p.x, p.y + 43, 12, '#96795e');
   }
   round(422, 595, 156, 44, 12, '#a8b8a0'); text('WELCOME', 500, 623, 16, '#ffffff');
   for (const [index, guest] of sim.arrivals.entries()) {
-    character(`line-${guest.id}`, { x: 10.6 + index * 1.55, y: 10.6 }, ['#c89199', '#8baeb0', '#cbb36d'][(guest.id - 1) % 3], `Waiting · ${index + 1}`);
+    character(`line-${guest.id}`, { x: 10.6 + index * 1.55, y: 10.6 }, guests[(guest.id - 1) % guests.length], `Waiting · ${index + 1}`);
   }
-  for (const c of [...sim.customers].sort((a, b) => a.position.y - b.position.y)) character(String(c.id), c.position, ['#c89199', '#8baeb0', '#cbb36d'][c.recipe], c.state === 'waiting' ? recipes[c.recipe].name : c.state === 'eating' ? 'So delicious!' : c.personality);
-  character('server', sim.server.position, '#7f9a85', sim.server.task?.kind === 'clean' ? 'Mochi · tidying' : sim.server.task ? 'Mochi · serving' : 'Mochi · ready', false, sim.server.task?.kind === 'deliver' && sim.server.phase === 'target');
+  for (const c of [...sim.customers].sort((a, b) => a.position.y - b.position.y)) {
+    if (c.state === 'walking' || c.state === 'leaving')
+      character(String(c.id), c.position, guests[(c.id - 1) % guests.length], c.personality);
+  }
+  const task = sim.server.task;
+  character('server', sim.server.position, 'server', task?.kind === 'clean' ? 'Mochi · tidying' : task ? 'Mochi · serving' : 'Mochi · ready');
+  if (task?.kind === 'deliver' && sim.server.phase === 'target') {
+    const customer = sim.customers.find(c => c.id === task.target);
+    const hand = drawn.get('server')!;
+    if (customer) sprite(dishes[customer.recipe], hand.x + 23, hand.y - 37, 23);
+  }
   // Do not retain render positions for departed guests indefinitely.
   const live = new Set(['chef', 'server', ...sim.customers.map(c => String(c.id)), ...sim.arrivals.map(c => `line-${c.id}`)]);
   for (const id of drawn.keys()) if (!live.has(id)) drawn.delete(id);
