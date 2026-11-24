@@ -7,7 +7,11 @@ export const pickup = { x: 7, y: 3 };
 export const seatPositions = [{ x: 3, y: 5 }, { x: 7, y: 5 }, { x: 11, y: 5 }];
 export const obstacles = new Set<string>();
 for (let x = 2; x <= 12; x++) obstacles.add(`${x},2`);
-for (const seat of seatPositions) obstacles.add(`${seat.x},${seat.y - 1}`);
+// The tabletop projects toward the entrance. Approach chairs from the rear aisle.
+for (const seat of seatPositions) {
+  for (const dx of [-1, 0, 1]) obstacles.add(key({ x: seat.x + dx, y: seat.y + 1 }));
+}
+export const servicePoint = (seat: Point) => ({ x: seat.x + 1, y: seat.y });
 // Uniform-cost four-neighbour BFS: shortest paths on this tiny unweighted grid.
 // Rendering is continuous and never displays the navigation grid.
 export function pathfind(start: Point, goal: Point, blocked = obstacles): Point[] | null {

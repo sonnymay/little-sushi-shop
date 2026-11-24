@@ -1,6 +1,7 @@
-import { advancePose, walkColumn, type WalkPose } from './walking';
+import { sampleTravel, world, clamp, smooth, foot } from './walking';
 import { Simulation, recipes } from './simulation';
-import type { Point } from './navigation';
+import type { Travel } from './simulation';
+import { same, type Point } from './navigation';
 import './style.css';
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
@@ -16,16 +17,15 @@ let sim = new Simulation(), speed = 1;
 const $ = (id: string) => document.getElementById(id)!;
 $('pause').onclick = () => { sim.paused = !sim.paused; $('pause').textContent = sim.paused ? 'Resume' : 'Pause'; };
 $('speed').onclick = () => { speed = speed === 1 ? 3 : 1; $('speed').textContent = `${speed}× speed`; };
-$('restart').onclick = () => { sim = new Simulation(); drawn.clear(); $('pause').textContent = 'Pause'; };
+$('restart').onclick = () => { sim = new Simulation(); captions.clear(); $('pause').textContent = 'Pause'; };
 $('upgrade').onclick = () => sim.buyUpgrade();
-const world = (p: Point) => ({ x: 115 + p.x * 55, y: 190 + p.y * 40 + 40 * Math.sin(Math.PI * Math.min(p.y, 10) / 10) });
 function round(x: number, y: number, w: number, h: number, r: number, fill: string, stroke?: string) {
   ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fillStyle = fill; ctx.fill();
   if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 3; ctx.stroke(); }
 }
 function ellipse(x: number, y: number, rx: number, ry: number, color: string) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); }
 function text(value: string, x: number, y: number, size = 16, color = '#695044') { ctx.font = `600 ${size}px system-ui`; ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.fillText(value, x, y); }
-const drawn = new Map<string, WalkPose>();
+
 const atlas = new Image();
 atlas.src = './art/shop-cast.webp';
 // Tight source rectangles in the transparent atlas, in pixels.
@@ -49,31 +49,124 @@ function sprite(name: keyof typeof sprites, x: number, bottom: number, height: n
 const walking = new Image();
 walking.src = './art/walking.webp';
 const walkRows = { courier: 0, mapmaker: 1, potter: 2, server: 3 } as const;
-let frameSeconds = 0;
-function character(id: string, position: Point, art: keyof typeof walkRows, label: string, seated = false) {
-  const pose = advancePose(drawn.get(id), world(position), frameSeconds);
-  drawn.set(id, pose);
-  const { x, y } = pose;
-  const bob = pose.moving ? -Math.abs(Math.sin(pose.distance * Math.PI / 21)) * 1.5 : 0;
-  const height = adultHeight * depthScale(y);
-  // Lower the hips onto the cushion while preserving the size of the head.
-  const bottom = y + (seated ? 24 : 8);
-  if (!seated) ellipse(x, bottom - 1, 22, 6, '#614a3a22');
+type Art = keyof typeof walkRows;
+type Pose = ReturnType<typeof sampleTravel>;
+type Layer = { y: number; draw: () => void };
+type Label = { x: number; y: number; value: string; opacity: number };
+const captions = new Map<string, { value: string; since: number }>();
+const strides = new WeakMap<object, { edge?: Travel; base: number }>();
+
+function strideDistance(actor: object, edge: Travel | undefined, pose: Pose) {
+  const last = strides.get(actor);
+  let base = last?.base ?? 0;
+  if (last?.edge && last.edge !== edge) {
+    const a = world(last.edge.from), b = world(last.edge.to);
+    base += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  strides.set(actor, { edge, base });
+  return base + pose.along;
+}
+
+function shadow(x: number, y: number, width: number) {
   ctx.save();
-  if (seated) {
+  ctx.translate(x, y);
+  ctx.scale(width, width * 0.27);
+  const shade = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+  shade.addColorStop(0, '#553c3260'); shade.addColorStop(1, '#553c3200');
+  ctx.fillStyle = shade; ctx.fillRect(-1, -1, 2, 2);
+  ctx.restore();
+}
+
+// Deform the existing artwork from the waist down. All offsets are in canvas
+// units so the planted foot counters the body's actual screen displacement.
+function gait(art: Art, pose: Pose, distance: number, height: number, bottom: number) {
+  const scale = height / 160, step = height * 0.135;
+  const motion = pose.moving ? 1 : 0;
+  const breath = Math.sin(sim.visualTick * 0.22) * 0.7;
+  const bob = motion ? -1.6 * Math.sin(Math.PI * distance / step) ** 2 : breath;
+  const column = pose.dy < 0 ? 4 : pose.dx ? 2 : 0;
+  const sx = column * 116, sy = walkRows[art] * 160;
+  ctx.save();
+  ctx.translate(pose.x, bottom);
+  if (pose.dx < 0) ctx.scale(-1, 1);
+  ctx.scale(scale, scale);
+  const torso = bob / scale;
+  if (!pose.moving) {
+    // Anchor the soles as the chest rises and falls.
+    ctx.drawImage(walking, sx, sy, 116, 160, -58, -160 + torso, 116, 160 - torso);
+    ctx.restore();
+    return;
+  }
+  ctx.drawImage(walking, sx, sy, 116, 58, -58, -160 + torso, 116, 58);
+  for (let side = 0; side < 2; side++) {
+    const limb = foot(distance, step, side === 1);
+    function offset(row: number) {
+      const leg = smooth((row - 101) / 55);
+      const arm = Math.sin(Math.PI * clamp((row - 58) / 47));
+      const swing = motion * limb.reach / scale;
+      return {
+        x: Math.abs(pose.dx) * swing * leg - swing * arm * 0.22,
+        y: torso * (1 - leg) + motion * (pose.dy * limb.reach - limb.lift) / scale * leg,
+      };
+    }
+    // Each horizontal strip meets its neighbour at the same displaced boundary.
+    for (let row = 58; row < 160; row += 3) {
+      const end = Math.min(row + 3, 160), a = offset(row), b = offset(end);
+      const x = side * 58;
+      // Keep the garment joined along the centre seam above the knees.
+      const seam = a.x * smooth((row - 120) / 18);
+      const left = side === 0 ? a.x : seam;
+      const right = side === 0 ? seam : a.x;
+      ctx.drawImage(walking, sx + x, sy + row, 58, end - row,
+        x - 58 + left, row - 160 + a.y, 58 + right - left, end - row + b.y - a.y + 0.4);
+    }
+  }
+  ctx.restore();
+}
+
+function drawActor(art: Art, pose: Pose, distance: number, sitting: number) {
+  const height = adultHeight * depthScale(pose.y), bottom = pose.y + 8 + 16 * sitting;
+  shadow(pose.x, pose.y + 7, height * 0.22);
+  const ready = walking.complete && walking.naturalWidth > 0;
+  ctx.save();
+  if (sitting > 0) {
     ctx.beginPath();
-    ctx.rect(x - height / 2, bottom - height - 4, height, height * 0.72);
+    ctx.rect(pose.x - height, bottom - height - 3, height * 2, height * (1 - 0.28 * sitting) + 3);
     ctx.clip();
   }
-  if (!seated && walking.complete && walking.naturalWidth && (pose.moving || pose.facing !== 'down')) {
-    const width = height * 116 / 160;
-    ctx.translate(x, bottom + bob);
-    if (pose.facing === 'left') ctx.scale(-1, 1);
-    ctx.drawImage(walking, walkColumn(pose) * 116, walkRows[art] * 160, 116, 160, -width / 2, -height, width, height);
-  } else sprite(art, x, bottom, height);
+  if (ready && sitting < 1) {
+    ctx.globalAlpha = 1 - sitting;
+    gait(art, pose, distance, height, bottom);
+  }
+  if (!ready || sitting > 0) {
+    ctx.globalAlpha = ready ? sitting : 1;
+    sprite(art, pose.x, bottom, height + 0.7 * Math.sin(sim.visualTick * 0.22));
+  }
   ctx.restore();
-  round(x - 51, bottom - height - 22, 102, 18, 9, '#fffdf4ef');
-  text(label, x, bottom - height - 9, 10);
+}
+
+function caption(labels: Label[], id: string, value: string, pose: Pose) {
+  let entry = captions.get(id);
+  if (!entry || entry.value !== value) {
+    entry = { value, since: sim.visualTick }; captions.set(id, entry);
+  }
+  const opacity = clamp((30 - (sim.visualTick - entry.since)) / 9);
+  if (opacity) labels.push({ x: pose.x, y: pose.y - adultHeight * depthScale(pose.y) - 9, value, opacity });
+}
+
+function drawLabels(labels: Label[]) {
+  const placed: { x: number; y: number; width: number }[] = [];
+  for (const label of labels.sort((a, b) => b.y - a.y)) {
+    ctx.font = '600 10px system-ui';
+    const width = Math.ceil(ctx.measureText(label.value).width) + 14;
+    const x = Math.max(width / 2, Math.min(1000 - width / 2, label.x));
+    let y = label.y;
+    while (placed.some(p => Math.abs(x - p.x) < (width + p.width) / 2 + 3 && Math.abs(y - p.y) < 18)) y -= 18;
+    placed.push({ x, y, width });
+    ctx.save(); ctx.globalAlpha = label.opacity;
+    round(x - width / 2, y - 9, width, 16, 8, '#fffdf4ed');
+    text(label.value, x, y + 3, 10); ctx.restore();
+  }
 }
 function render() {
   ctx.clearRect(0, 0, 1000, 720);
@@ -87,49 +180,61 @@ function render() {
   if (hana.complete && hana.naturalWidth) {
     const height = adultHeight * depthScale(260) * 0.58;
     const width = height * hana.naturalWidth / hana.naturalHeight;
-    const bob = sim.chef ? Math.sin(sim.ticks * 0.36) * 2 : 0;
+    shadow(500, 256, 22);
+    const bob = Math.sin(sim.visualTick * (sim.chef ? 0.36 : 0.22)) * (sim.chef ? 2 : 0.7);
     ctx.drawImage(hana, 500 - width / 2, 258 - height + bob, width, height);
   }
   round(205, 265, 590, 55, 17, '#bb815c', '#9c6a4d'); round(192, 250, 616, 34, 16, '#dfb187', '#a87754');
   for (let i = 0; i < 3; i++) sprite(dishes[i], 315 + i * 90, 270, plateHeight * depthScale(260));
   text('PICKUP', 675, 273, 12, '#805744');
   round(422, 595, 156, 44, 12, '#a8b8a0'); text('WELCOME', 500, 623, 16, '#ffffff');
-  const layers: { y: number; draw: () => void }[] = [];
+  const layers: Layer[] = [], labels: Label[] = [];
   for (const [index, seat] of sim.seats.entries()) {
     const p = world(seat.position);
-    layers.push({ y: p.y + 12, draw: () => {
-      sprite('chair', p.x, p.y + 9, 70);
-      const c = sim.customers.find(c => c.id === seat.owner);
-      if (c && (c.state === 'waiting' || c.state === 'eating')) {
-        character(String(c.id), c.position, guests[(c.id - 1) % guests.length],
-          c.state === 'waiting' ? recipes[c.recipe].name : 'So delicious!', true);
-      }
+    layers.push({ y: p.y + 9, draw: () => sprite('chair', p.x, p.y + 9, 70) });
+    layers.push({ y: p.y + 28, draw: () => {
       sprite('table', p.x, p.y + 28, 69);
-      if (c?.state === 'eating') sprite(dishes[c.recipe], p.x - 10, p.y - 12, plateHeight);
+      const customer = sim.customers.find(c => c.id === seat.owner);
+      if (customer?.state === 'eating') sprite(dishes[customer.recipe], p.x - 10, p.y - 12, plateHeight);
       else if (seat.dirty) ellipse(p.x - 10, p.y - 12, 15, 5, '#eee5d7');
       text(seat.dirty ? 'Cleaning soon' : `Table ${index + 1}`, p.x, p.y + 43, 12, '#96795e');
     } });
   }
+  const live = new Set<string>();
+  function actor(id: string, entity: { position: Point }, art: Art, value: string, sitting = 0, plate?: number) {
+    const edge = sim.travel.get(entity);
+    const pose = sampleTravel(entity.position, edge, sim.visualTick);
+    const distance = strideDistance(entity, edge, pose);
+    live.add(id); caption(labels, id, value, pose);
+    layers.push({ y: pose.y + 8 + 16 * sitting, draw: () => {
+      drawActor(art, pose, distance, sitting);
+      if (plate !== undefined) {
+        const scale = depthScale(pose.y);
+        sprite(dishes[plate], pose.x + (pose.dx < 0 ? -27 : 27) * scale, pose.y + 8 - adultHeight * scale * 0.52, plateHeight * scale);
+      }
+    } });
+  }
   for (const [index, guest] of sim.arrivals.entries()) {
-    layers.push({ y: world({ x: 0, y: 10.6 }).y, draw: () => character(`line-${guest.id}`, { x: 10.6 + index * 1.55, y: 10.6 }, guests[(guest.id - 1) % guests.length], `Waiting · ${index + 1}`) });
+    const position = { x: 10.6 + index * 1.55, y: 10.6 };
+    actor(`line-${guest.id}`, { position }, guests[(guest.id - 1) % guests.length], `Waiting · ${index + 1}`);
   }
   for (const c of sim.customers) {
-    if (c.state === 'walking' || c.state === 'leaving')
-      layers.push({ y: world(c.position).y, draw: () => character(String(c.id), c.position, guests[(c.id - 1) % guests.length], c.personality) });
+    const elapsed = c.timer + sim.visualTick - sim.ticks;
+    const inChair = same(c.position, sim.seats[c.seat].position);
+    let sitting = 0;
+    if (c.state === 'waiting') sitting = smooth(elapsed / 4);
+    if (c.state === 'eating') sitting = 1;
+    if (c.state === 'leaving' && inChair) sitting = 1 - smooth(elapsed / 4);
+    const status = c.state === 'waiting' ? recipes[c.recipe].name : c.state === 'eating' ? 'So delicious!' : c.personality;
+    actor(String(c.id), c, guests[(c.id - 1) % guests.length], status, sitting);
   }
-  const task = sim.server.task;
-  layers.push({ y: world(sim.server.position).y, draw: () => {
-    character('server', sim.server.position, 'server', task?.kind === 'clean' ? 'Mochi · tidying' : task ? 'Mochi · serving' : 'Mochi · ready');
-    if (task?.kind === 'deliver' && sim.server.phase === 'target') {
-      const customer = sim.customers.find(c => c.id === task.target);
-      const hand = drawn.get('server')!;
-      if (customer) sprite(dishes[customer.recipe], hand.x + (hand.facing === 'left' ? -27 : 27) * depthScale(hand.y), hand.y + 8 - adultHeight * depthScale(hand.y) * 0.52, plateHeight * depthScale(hand.y));
-    }
-  } });
+  const server = sim.server, task = server.task;
+  const plate = task?.kind === 'deliver' && server.phase === 'target'
+    ? sim.customers.find(c => c.id === task.target)?.recipe : undefined;
+  actor('server', server, 'server', task?.kind === 'clean' ? 'Mochi · tidying' : task ? 'Mochi · serving' : 'Mochi · ready', 0, plate);
   for (const layer of layers.sort((a, b) => a.y - b.y)) layer.draw();
-  // Do not retain render positions for departed guests indefinitely.
-  const live = new Set(['chef', 'server', ...sim.customers.map(c => String(c.id)), ...sim.arrivals.map(c => `line-${c.id}`)]);
-  for (const id of drawn.keys()) if (!live.has(id)) drawn.delete(id);
+  drawLabels(labels);
+  for (const id of captions.keys()) if (!live.has(id)) captions.delete(id);
   $('coins').textContent = `${sim.coins} coins`; $('served').textContent = `${sim.served} served`;
   const seconds = Math.floor(sim.ticks / 10); $('clock').textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
   $('activity').textContent = sim.paused ? 'Taking a little break' : `${sim.customers.length} inside · ${sim.arrivals.length} in line`;
@@ -137,5 +242,5 @@ function render() {
   $('events').innerHTML = sim.events.map(event => `<li>${event}</li>`).join('');
 }
 let previous = performance.now();
-function frame(now: number) { frameSeconds = sim.paused ? 0 : Math.min((now - previous) / 1000, 0.2) * speed; sim.advance(frameSeconds); previous = now; render(); requestAnimationFrame(frame); }
+function frame(now: number) { sim.advance(Math.min((now - previous) / 1000 * speed, 0.5)); previous = now; render(); requestAnimationFrame(frame); }
 requestAnimationFrame(frame);
