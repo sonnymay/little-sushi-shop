@@ -50,6 +50,7 @@ const cast = {
   courier: { hair: '#6d4535', shirt: '#b97852', pants: '#74685b', skin: '#f5cda5', accent: '#f0d5a3' },
   mapmaker: { hair: '#403d38', shirt: '#819b85', pants: '#596b68', skin: '#f4cca7', accent: '#e9e1bc' },
   potter: { hair: '#805748', shirt: '#c78883', pants: '#77647a', skin: '#e9b68d', accent: '#f7e2cc' },
+  chef: { hair: '#47392f', shirt: '#eee2ce', pants: '#655a4d', skin: '#f6d0aa', accent: '#a66f59' },
   server: { hair: '#493c33', shirt: '#547b73', pants: '#514c45', skin: '#f6d0aa', accent: '#f9e9c9' },
 } as const;
 type Art = keyof typeof cast;
@@ -109,7 +110,7 @@ function drawActor(art: Art, pose: Pose, distance: number, sitting: number,
     const spread = side ? 5 : 10;
     const hip = { x: sign * spread, y: hipY };
     const ankle = { x: sign * spread + (side ? stride.reach / s + sitting * 16 : 0),
-      y: -5 - stride.lift / s + (!side ? pose.dy * stride.reach / s * 0.48 : 0) };
+      y: -5 - stride.lift / s + (!side ? pose.dy * stride.reach / s : 0) };
     const knee = { x: (hip.x + ankle.x) / 2 + (side ? 4 + sitting * 9 : sign * 2 * sitting),
       y: (hip.y + ankle.y) / 2 - sitting * 6 };
     bone(hip, knee, 15, palette.pants); bone(knee, ankle, 12, palette.pants);
@@ -120,7 +121,7 @@ function drawActor(art: Art, pose: Pose, distance: number, sitting: number,
     const sign = i === 0 ? -1 : 1;
     const stride = walking ? foot(distance, step, i !== 1).reach / s : 0;
     const shoulder = { x: sign * (side ? 9 : 20), y: shoulderY + 5 };
-    let hand = { x: shoulder.x + (side ? stride * 0.8 : sign * 4), y: shoulder.y + 30 };
+    let hand = { x: shoulder.x + (side ? stride * 0.8 : sign * 4), y: shoulder.y + 30 + (!side ? pose.dy * stride * 0.6 : 0) };
     if (action === 'carry') hand = { x: side ? 29 : sign * 15, y: shoulder.y + 16 };
     if (action === 'eat') hand = { x: side ? 17 : sign * 12, y: shoulder.y + 12 - 15 * (0.5 + 0.5 * activity) };
     if (action === 'clean' || action === 'cook') hand = { x: (side ? 24 : sign * 14) + activity * 7, y: shoulder.y + 23 + activity * 3 };
@@ -164,9 +165,9 @@ function drawActor(art: Art, pose: Pose, distance: number, sitting: number,
     ellipse(-8, -5, 13, 18, palette.hair);
     ellipse(8, -5, 13, 18, palette.hair);
   }
-  if (art === 'server' || action === 'cook') {
+  if (art === 'server' || art === 'chef') {
     round(-22, -23, 44, 9, 4, '#f9e9c9', '#594438');
-    if (action === 'cook') { ellipse(-12, -28, 13, 12, '#fff3d8'); ellipse(9, -29, 15, 13, '#fff3d8'); }
+    if (art === 'chef') { ellipse(-12, -28, 13, 12, '#fff3d8'); ellipse(9, -29, 15, 13, '#fff3d8'); }
   }
   ctx.restore();
   if (action === 'carry' && plate !== undefined) {
@@ -212,7 +213,7 @@ function render() {
   for (const x of [95, 745]) { round(x, 70, 155, 135, 10, '#cda47f'); round(x + 9, 79, 137, 117, 5, '#f6f0d6'); for (let i = 1; i < 4; i++) round(x + 9 + i * 32, 79, 4, 117, 1, '#d4b48d'); round(x + 9, 135, 137, 4, 1, '#d4b48d'); }
   round(340, 58, 320, 78, 14, '#46645c'); text('Little Sushi Shop', 500, 106, 28, '#fff3d8');
   for (const x of [290, 710]) { round(x - 1, 38, 2, 88, 1, '#ae8d66'); ellipse(x, 146, 24, 32, '#f1bd81'); text('寿', x, 153, 22, '#945e44'); }
-  drawActor('server', { x: 500, y: 267, dx: 0, dy: 1, moving: false, along: 0 }, 0, 0, sim.chef ? 'cook' : 'idle');
+  drawActor('chef', { x: 500, y: 267, dx: 0, dy: 1, moving: false, along: 0 }, 0, 0, sim.chef ? 'cook' : 'idle');
   round(205, 265, 590, 55, 17, '#bb815c', '#9c6a4d'); round(192, 250, 616, 34, 16, '#dfb187', '#a87754');
   for (let i = 0; i < 3; i++) sprite(dishes[i], 315 + i * 90, 270, plateHeight * depthScale(260));
   text('PICKUP', 675, 273, 12, '#805744');
@@ -238,7 +239,7 @@ function render() {
     const distance = strideDistance(entity, edge, pose);
     live.add(id); caption(labels, id, value, pose);
     layers.push({ y: pose.y + 8 + 16 * sitting, draw: () => {
-      drawActor(art, pose, distance, sitting, plate !== undefined ? 'carry' : action, plate);
+      drawActor(art, pose, distance, sitting, plate !== undefined ? 'carry' : pose.moving && action === 'clean' ? 'idle' : action, plate);
     } });
   }
   for (const [index, guest] of sim.arrivals.entries()) {
