@@ -17,7 +17,7 @@ $('pause').onclick = () => { sim.paused = !sim.paused; $('pause').textContent = 
 $('speed').onclick = () => { speed = speed === 1 ? 3 : 1; $('speed').textContent = `${speed}× speed`; };
 $('restart').onclick = () => { sim = new Simulation(); drawn.clear(); $('pause').textContent = 'Pause'; };
 $('upgrade').onclick = () => sim.buyUpgrade();
-const world = (p: Point) => ({ x: 115 + p.x * 55, y: 190 + p.y * 40 });
+const world = (p: Point) => ({ x: 115 + p.x * 55, y: 190 + p.y * 40 + 40 * Math.sin(Math.PI * Math.min(p.y, 10) / 10) });
 function round(x: number, y: number, w: number, h: number, r: number, fill: string, stroke?: string) {
   ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fillStyle = fill; ctx.fill();
   if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 3; ctx.stroke(); }
@@ -35,6 +35,10 @@ const sprites = {
 } as const;
 const guests = ['courier', 'mapmaker', 'potter'] as const;
 const dishes = ['salmon', 'tuna', 'california'] as const;
+// Canvas units at the dining tables. The chef artwork is a waist-up portrait.
+const adultHeight = 128;
+const depthScale = (floorY: number) => 1 + (floorY - 430) / 1800;
+const plateHeight = 21;
 function sprite(name: keyof typeof sprites, x: number, bottom: number, height: number) {
   if (!atlas.complete || !atlas.naturalWidth) return;
   const [sx, sy, sw, sh] = sprites[name];
@@ -47,10 +51,18 @@ function character(id: string, position: Point, art: keyof typeof sprites, label
   drawn.set(id, { x, y });
   const moving = Math.hypot(target.x - x, target.y - y) > 1;
   const bob = Math.sin(sim.ticks * (moving ? 0.7 : 0.18) + target.x) * (moving ? 2.2 : 0.7);
-  const bottom = y + (seated ? 10 : 8);
-  const height = seated ? 91 : 103;
-  ellipse(x, bottom - 1, 22, 6, '#614a3a22');
+  const height = adultHeight * depthScale(y);
+  // Lower the hips onto the cushion while preserving the size of the head.
+  const bottom = y + (seated ? 24 : 8);
+  if (!seated) ellipse(x, bottom - 1, 22, 6, '#614a3a22');
+  ctx.save();
+  if (seated) {
+    ctx.beginPath();
+    ctx.rect(x - height / 2, bottom - height - 4, height, height * 0.72);
+    ctx.clip();
+  }
   sprite(art, x, bottom + bob, height);
+  ctx.restore();
   round(x - 51, bottom - height - 22, 102, 18, 9, '#fffdf4ef');
   text(label, x, bottom - height - 9, 10);
 }
@@ -64,42 +76,48 @@ function render() {
   round(340, 58, 320, 78, 14, '#46645c'); text('Little Sushi Shop', 500, 106, 28, '#fff3d8');
   for (const x of [290, 710]) { round(x - 1, 38, 2, 88, 1, '#ae8d66'); ellipse(x, 146, 24, 32, '#f1bd81'); text('寿', x, 153, 22, '#945e44'); }
   if (hana.complete && hana.naturalWidth) {
-    const height = 120;
+    const height = adultHeight * depthScale(260) * 0.58;
     const width = height * hana.naturalWidth / hana.naturalHeight;
     const bob = sim.chef ? Math.sin(sim.ticks * 0.36) * 2 : 0;
-    ctx.drawImage(hana, 500 - width / 2, 254 - height + bob, width, height);
+    ctx.drawImage(hana, 500 - width / 2, 258 - height + bob, width, height);
   }
   round(205, 265, 590, 55, 17, '#bb815c', '#9c6a4d'); round(192, 250, 616, 34, 16, '#dfb187', '#a87754');
-  for (let i = 0; i < 3; i++) sprite(dishes[i], 315 + i * 90, 272, 31);
+  for (let i = 0; i < 3; i++) sprite(dishes[i], 315 + i * 90, 270, plateHeight * depthScale(260));
   text('PICKUP', 675, 273, 12, '#805744');
+  round(422, 595, 156, 44, 12, '#a8b8a0'); text('WELCOME', 500, 623, 16, '#ffffff');
+  const layers: { y: number; draw: () => void }[] = [];
   for (const [index, seat] of sim.seats.entries()) {
     const p = world(seat.position);
-    sprite('chair', p.x, p.y + 10, 61);
-    const c = sim.customers.find(c => c.id === seat.owner);
-    if (c && (c.state === 'waiting' || c.state === 'eating')) {
-      character(String(c.id), c.position, guests[(c.id - 1) % guests.length],
-        c.state === 'waiting' ? recipes[c.recipe].name : 'So delicious!', true);
-    }
-    sprite('table', p.x, p.y + 34, 67);
-    if (c?.state === 'eating') sprite(dishes[c.recipe], p.x - 10, p.y - 7, 24);
-    else if (seat.dirty) ellipse(p.x - 10, p.y - 12, 15, 5, '#eee5d7');
-    text(seat.dirty ? 'Cleaning soon' : `Table ${index + 1}`, p.x, p.y + 43, 12, '#96795e');
+    layers.push({ y: p.y + 12, draw: () => {
+      sprite('chair', p.x, p.y + 9, 70);
+      const c = sim.customers.find(c => c.id === seat.owner);
+      if (c && (c.state === 'waiting' || c.state === 'eating')) {
+        character(String(c.id), c.position, guests[(c.id - 1) % guests.length],
+          c.state === 'waiting' ? recipes[c.recipe].name : 'So delicious!', true);
+      }
+      sprite('table', p.x, p.y + 28, 69);
+      if (c?.state === 'eating') sprite(dishes[c.recipe], p.x - 10, p.y - 12, plateHeight);
+      else if (seat.dirty) ellipse(p.x - 10, p.y - 12, 15, 5, '#eee5d7');
+      text(seat.dirty ? 'Cleaning soon' : `Table ${index + 1}`, p.x, p.y + 43, 12, '#96795e');
+    } });
   }
-  round(422, 595, 156, 44, 12, '#a8b8a0'); text('WELCOME', 500, 623, 16, '#ffffff');
   for (const [index, guest] of sim.arrivals.entries()) {
-    character(`line-${guest.id}`, { x: 10.6 + index * 1.55, y: 10.6 }, guests[(guest.id - 1) % guests.length], `Waiting · ${index + 1}`);
+    layers.push({ y: world({ x: 0, y: 10.6 }).y, draw: () => character(`line-${guest.id}`, { x: 10.6 + index * 1.55, y: 10.6 }, guests[(guest.id - 1) % guests.length], `Waiting · ${index + 1}`) });
   }
-  for (const c of [...sim.customers].sort((a, b) => a.position.y - b.position.y)) {
+  for (const c of sim.customers) {
     if (c.state === 'walking' || c.state === 'leaving')
-      character(String(c.id), c.position, guests[(c.id - 1) % guests.length], c.personality);
+      layers.push({ y: world(c.position).y, draw: () => character(String(c.id), c.position, guests[(c.id - 1) % guests.length], c.personality) });
   }
   const task = sim.server.task;
-  character('server', sim.server.position, 'server', task?.kind === 'clean' ? 'Mochi · tidying' : task ? 'Mochi · serving' : 'Mochi · ready');
-  if (task?.kind === 'deliver' && sim.server.phase === 'target') {
-    const customer = sim.customers.find(c => c.id === task.target);
-    const hand = drawn.get('server')!;
-    if (customer) sprite(dishes[customer.recipe], hand.x + 23, hand.y - 37, 23);
-  }
+  layers.push({ y: world(sim.server.position).y, draw: () => {
+    character('server', sim.server.position, 'server', task?.kind === 'clean' ? 'Mochi · tidying' : task ? 'Mochi · serving' : 'Mochi · ready');
+    if (task?.kind === 'deliver' && sim.server.phase === 'target') {
+      const customer = sim.customers.find(c => c.id === task.target);
+      const hand = drawn.get('server')!;
+      if (customer) sprite(dishes[customer.recipe], hand.x + 27 * depthScale(hand.y), hand.y + 8 - adultHeight * depthScale(hand.y) * 0.52, plateHeight * depthScale(hand.y));
+    }
+  } });
+  for (const layer of layers.sort((a, b) => a.y - b.y)) layer.draw();
   // Do not retain render positions for departed guests indefinitely.
   const live = new Set(['chef', 'server', ...sim.customers.map(c => String(c.id)), ...sim.arrivals.map(c => `line-${c.id}`)]);
   for (const id of drawn.keys()) if (!live.has(id)) drawn.delete(id);
