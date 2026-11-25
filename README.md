@@ -2,6 +2,10 @@
 
 A small autonomous sushi restaurant simulation written in TypeScript. Guests reserve seats, order one of three recipes, wait, eat, pay, and leave. Hana prepares sushi; Mochi serves dishes and cleans tables. No staff micromanagement required.
 
+[Play Little Sushi Shop](https://sonnymay-little-sushi-shop.fantastichinny32.chatgpt.site)
+
+Watch the window table after the first delivery (around 9 seconds at 1×). The courier reaches with chopsticks, lifts salmon nigiri, and smiles while chewing. Each guest has their own illustrated sequence for their usual order.
+
 ## Run
 
 Requires Node.js 22.12+ and npm.
@@ -22,9 +26,9 @@ npm run test:e2e
 - A deterministic 10 Hz simulation, shortest-path grid navigation, smooth Canvas rendering.
 - Exact-once settlement, 100 starting coins, 75-coin one-time chef upgrade.
 - Pause, restart and 3× speed controls. Reloading resets progress.
-- Original rounded vector-style placeholder characters and warm Japanese shop setting; no pixel art.
+- Original painted chibi characters, four-direction walking, and three illustrated dining sequences.
 
-This is a functional foundation, **not the finished polished art release**. Personalities currently affect seat preference, recipe choice, eating duration and patience. There is no layout editor, save system, sound or collision avoidance between characters. NPCs can pass each other; navigation avoids furniture. Orders are placed upon seating, without a waiter order-taking visit. Up to three guests wait by the entrance. Clean seats go to the longest-waiting guest. Guests leave after 24 simulated seconds in line or turn away if the line is full.
+This is a functional foundation, **not the finished polished art release**. Personalities currently affect seat preference, recipe choice, eating duration and patience. Layout editing, persistence and sound are still future work. NPCs reserve aisle cells and route around furniture. Orders are placed upon seating, without a waiter order-taking visit. Up to three guests wait by the entrance. Clean seats go to the longest-waiting guest. Guests leave after 24 simulated seconds in line or turn away if the line is full.
 
 ## Architecture
 
@@ -38,11 +42,11 @@ This is a functional foundation, **not the finished polished art release**. Pers
 
 ## Deployment
 
-`npm run build` produces a static `dist/` directory. Import the repository into a static host with build command `npm run build` and output directory `dist`. Vite defaults work at the domain root; set Vite's `base` for a subdirectory deployment. No public demo has been deployed yet.
+`npm run build` produces a static `dist/` directory. Import the repository into a static host with build command `npm run build` and output directory `dist`. Vite defaults work at the domain root; set Vite's `base` for a subdirectory deployment. The public demo serves the production build.
 
 ## Next priorities
 
-1. Publish the repository and demo.
+1. Give Hana illustrated sushi-preparation poses.
 2. Fix visual overlap at shared service points.
 3. Replace prototype shapes with cohesive original hand-drawn chibi animation.
 4. Add richer personalities, then consider layout upgrades.

@@ -124,9 +124,23 @@ function gait(art: Art, pose: Pose, distance: number, height: number, bottom: nu
   ctx.restore();
 }
 
-function drawActor(art: Art, pose: Pose, distance: number, sitting: number) {
+const biteArt = new Image();
+biteArt.src = './art/bites.webp';
+
+function drawActor(art: Art, pose: Pose, distance: number, sitting: number, mealTick?: number) {
   const height = adultHeight * depthScale(pose.y), bottom = pose.y + 8 + 16 * sitting;
   shadow(pose.x, pose.y + 7, height * 0.22);
+  if (mealTick !== undefined && art !== 'server' && biteArt.complete && biteArt.naturalWidth) {
+    // Reach, lift, then linger on the happy expression. The simulation clock
+    // freezes the gesture on pause and scales it along with service at 3×.
+    const phase = mealTick % 20;
+    const frame = phase < 6 ? 0 : phase < 12 ? 1 : 2;
+    const size = height * 0.56;
+    const nod = frame === 2 ? 1.8 * Math.sin((phase - 12) * Math.PI / 4) : 0;
+    ctx.drawImage(biteArt, frame * 128, walkRows[art] * 128, 128, 128,
+      pose.x - size / 2, bottom - height + nod, size, size);
+    return;
+  }
   const ready = walking.complete && walking.naturalWidth > 0;
   ctx.save();
   if (sitting > 0) {
@@ -201,13 +215,13 @@ function render() {
     } });
   }
   const live = new Set<string>();
-  function actor(id: string, entity: { position: Point }, art: Art, value: string, sitting = 0, plate?: number) {
+  function actor(id: string, entity: { position: Point }, art: Art, value: string, sitting = 0, plate?: number, mealTick?: number) {
     const edge = sim.travel.get(entity);
     const pose = sampleTravel(entity.position, edge, sim.visualTick);
     const distance = strideDistance(entity, edge, pose);
     live.add(id); caption(labels, id, value, pose);
     layers.push({ y: pose.y + 8 + 16 * sitting, draw: () => {
-      drawActor(art, pose, distance, sitting);
+      drawActor(art, pose, distance, sitting, mealTick);
       if (plate !== undefined) {
         const scale = depthScale(pose.y);
         sprite(dishes[plate], pose.x + (pose.dx < 0 ? -27 : 27) * scale, pose.y + 8 - adultHeight * scale * 0.52, plateHeight * scale);
@@ -226,7 +240,7 @@ function render() {
     if (c.state === 'eating') sitting = 1;
     if (c.state === 'leaving' && inChair) sitting = 1 - smooth(elapsed / 4);
     const status = c.state === 'waiting' ? recipes[c.recipe].name : c.state === 'eating' ? 'So delicious!' : c.personality;
-    actor(String(c.id), c, guests[(c.id - 1) % guests.length], status, sitting);
+    actor(String(c.id), c, guests[(c.id - 1) % guests.length], status, sitting, undefined, c.state === 'eating' ? elapsed : undefined);
   }
   const server = sim.server, task = server.task;
   const plate = task?.kind === 'deliver' && server.phase === 'target'
