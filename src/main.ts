@@ -13,6 +13,8 @@ const canvas = document.querySelector('canvas')!;
 const ctx = canvas.getContext('2d')!;
 const hana = new Image();
 hana.src = `./art/hana.webp`;
+const preparation = new Image();
+preparation.src = './art/hana-prepares.webp';
 let sim = new Simulation(), speed = 1;
 const $ = (id: string) => document.getElementById(id)!;
 $('pause').onclick = () => { sim.paused = !sim.paused; $('pause').textContent = sim.paused ? 'Resume' : 'Pause'; };
@@ -191,16 +193,26 @@ function render() {
   for (const x of [95, 745]) { round(x, 70, 155, 135, 10, '#cda47f'); round(x + 9, 79, 137, 117, 5, '#f6f0d6'); for (let i = 1; i < 4; i++) round(x + 9 + i * 32, 79, 4, 117, 1, '#d4b48d'); round(x + 9, 135, 137, 4, 1, '#d4b48d'); }
   round(340, 58, 320, 78, 14, '#46645c'); text('Little Sushi Shop', 500, 106, 28, '#fff3d8');
   for (const x of [290, 710]) { round(x - 1, 38, 2, 88, 1, '#ae8d66'); ellipse(x, 146, 24, 32, '#f1bd81'); text('寿', x, 153, 22, '#945e44'); }
-  if (hana.complete && hana.naturalWidth) {
-    const height = adultHeight * depthScale(260) * 0.58;
-    const width = height * hana.naturalWidth / hana.naturalHeight;
-    shadow(500, 256, 22);
-    const bob = Math.sin(sim.visualTick * (sim.chef ? 0.36 : 0.22)) * (sim.chef ? 2 : 0.7);
-    ctx.drawImage(hana, 500 - width / 2, 258 - height + bob, width, height);
+  const chefHeight = adultHeight * depthScale(260) * 0.58;
+  const chef = sim.chef;
+  shadow(500, 256, 22);
+  if (chef && preparation.complete && preparation.naturalWidth) {
+    const progress = clamp((chef.duration - chef.remaining - 1 + sim.visualTick - sim.ticks) / chef.duration);
+    const stage = progress < 0.32 ? 0 : progress < 0.74 ? 1 : 2;
+    const press = stage === 1 ? 1.8 * Math.sin((progress - 0.32) / 0.42 * Math.PI) : 0;
+    const width = chefHeight * 192 / 256;
+    ctx.drawImage(preparation, stage * 192, 0, 192, 256,
+      500 - width / 2, 258 - chefHeight + press, width, chefHeight);
+    if (stage === 2) sprite(dishes[chef.recipe], 501, 258 - chefHeight * 0.24, chefHeight * 0.17);
+  } else if (hana.complete && hana.naturalWidth) {
+    const width = chefHeight * hana.naturalWidth / hana.naturalHeight;
+    const breath = Math.sin(sim.visualTick * 0.22) * 0.7;
+    ctx.drawImage(hana, 500 - width / 2, 258 - chefHeight + breath, width, chefHeight);
   }
   round(205, 265, 590, 55, 17, '#bb815c', '#9c6a4d'); round(192, 250, 616, 34, 16, '#dfb187', '#a87754');
-  for (let i = 0; i < 3; i++) sprite(dishes[i], 315 + i * 90, 270, plateHeight * depthScale(260));
-  text('PICKUP', 675, 273, 12, '#805744');
+  const ready = sim.orders.filter(order => order.status === 'ready');
+  ready.forEach((order, i) => sprite(dishes[order.recipe], 500 + i * 40, 270, plateHeight * depthScale(260)));
+  text('PICKUP', 635, 273, 12, '#805744');
   round(422, 595, 156, 44, 12, '#a8b8a0'); text('WELCOME', 500, 623, 16, '#ffffff');
   const layers: Layer[] = [], labels: Label[] = [];
   for (const [index, seat] of sim.seats.entries()) {

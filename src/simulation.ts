@@ -20,7 +20,7 @@ export class Simulation {
   seats: Seat[] = seatPositions.map(position => ({ position: { ...position }, owner: null, dirty: false }));
   orders: Order[] = [];
   tasks: Task[] = [];
-  chef: { customer: number; remaining: number } | null = null;
+  chef: { customer: number; recipe: number; duration: number; remaining: number } | null = null;
   server: Server = { position: { x: 9, y: 3 }, task: null, phase: 'pickup', timer: 0 };
   events: string[] = ['Welcome! Your tiny shop runs itself.'];
   readonly travel = new WeakMap<{ position: Point }, Travel>();
@@ -136,7 +136,11 @@ export class Simulation {
     }
     if (!this.chef) {
       const order = this.orders.find(o => o.status === 'placed');
-      if (order) { order.status = 'preparing'; this.chef = { customer: order.customer, remaining: Math.ceil(recipes[order.recipe].ticks * (this.upgraded ? 0.65 : 1)) }; }
+      if (order) {
+        const duration = Math.ceil(recipes[order.recipe].ticks * (this.upgraded ? 0.65 : 1));
+        order.status = 'preparing';
+        this.chef = { customer: order.customer, recipe: order.recipe, duration, remaining: duration };
+      }
     }
     if (this.chef && --this.chef.remaining <= 0) {
       const order = this.orders.find(o => o.customer === this.chef!.customer);

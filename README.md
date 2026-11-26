@@ -4,6 +4,8 @@ A small autonomous sushi restaurant simulation written in TypeScript. Guests res
 
 [Play Little Sushi Shop](https://sonnymay-little-sushi-shop.fantastichinny32.chatgpt.site)
 
+Watch Hana at the counter around 3 seconds at 1×. She gathers rice, presses it and presents the current order. Finished plates wait at pickup until Mochi collects them. [Watch the 6-second gameplay clip](docs/hana-prepares.mp4).
+
 Watch the window table after the first delivery (around 9 seconds at 1×). The courier reaches with chopsticks, lifts salmon nigiri, and smiles while chewing. Each guest has their own illustrated sequence for their usual order.
 
 ## Run
@@ -46,7 +48,7 @@ This is a functional foundation, **not the finished polished art release**. Pers
 
 ## Next priorities
 
-1. Give Hana illustrated sushi-preparation poses.
+1. Give Mochi a visible handoff when a plate reaches the table.
 2. Fix visual overlap at shared service points.
 3. Replace prototype shapes with cohesive original hand-drawn chibi animation.
 4. Add richer personalities, then consider layout upgrades.

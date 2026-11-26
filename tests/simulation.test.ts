@@ -66,6 +66,21 @@ describe('autonomous service', () => {
     expect(JSON.stringify(sim)).toBe(before);
     sim.paused = false; sim.advance(0.05); expect(sim.ticks).toBe(3);
   });
+  it('keeps an active prep sequence on its original clock after a knife upgrade', () => {
+    const sim = new Simulation();
+    while (!sim.chef) sim.tick();
+    const job = sim.chef;
+    expect(job.duration).toBe(recipes[job.recipe].ticks);
+    const remaining = job.remaining;
+    sim.buyUpgrade();
+    sim.paused = true;
+    sim.tick();
+    expect(job.remaining).toBe(remaining);
+    sim.paused = false;
+    for (let i = 0; i < remaining; i++) sim.tick();
+    expect(job.remaining).toBe(0);
+    expect(sim.orders.find(order => order.customer === job.customer)?.status).toBe('ready');
+  });
   it('charges for the upgrade once and reduces new preparation duration', () => {
     const a = new Simulation(), b = new Simulation(); expect(b.buyUpgrade()).toBe(true);
     expect(b.coins).toBe(25); expect(b.buyUpgrade()).toBe(false); expect(b.coins).toBe(25);
