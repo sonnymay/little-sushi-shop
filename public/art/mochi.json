@@ -1,0 +1,104 @@
+{
+  "character": "mochi",
+  "animation": "handoff",
+  "facing": "west",
+  "frameSize": {
+    "width": 153,
+    "height": 252
+  },
+  "coordinateOrigin": "top-left",
+  "coordinateUnits": "pixels",
+  "anchorNote": "All footAnchor and handAnchors coordinates are visual estimates measured from the 153x252 frame art (origin top-left) and may need minor in-engine tuning.",
+  "fps": 10,
+  "tickRateHz": 10,
+  "totalTicks": 8,
+  "tickSplit": [
+    2,
+    3,
+    3
+  ],
+  "plateDetachTick": 4,
+  "frames": [
+    {
+      "index": 0,
+      "name": "lean_in",
+      "file": "mochi-handoff-lean.webp",
+      "ticks": 2,
+      "tickRange": [
+        0,
+        1
+      ],
+      "footAnchor": {
+        "x": 92,
+        "y": 244
+      },
+      "handAnchors": {
+        "right": {
+          "x": 35,
+          "y": 123
+        },
+        "left": {
+          "x": 90,
+          "y": 135
+        },
+        "trayCenter": {
+          "x": 52,
+          "y": 128
+        }
+      }
+    },
+    {
+      "index": 1,
+      "name": "set_down_extend",
+      "file": "mochi-handoff-extend.webp",
+      "ticks": 3,
+      "tickRange": [
+        2,
+        4
+      ],
+      "plateDetachAtTick": 4,
+      "footAnchor": {
+        "x": 92,
+        "y": 244
+      },
+      "handAnchors": {
+        "right": {
+          "x": 32,
+          "y": 134
+        },
+        "left": {
+          "x": 87,
+          "y": 144
+        },
+        "trayCenter": {
+          "x": 46,
+          "y": 141
+        }
+      }
+    },
+    {
+      "index": 2,
+      "name": "release_smile",
+      "file": "mochi-handoff-release.webp",
+      "ticks": 3,
+      "tickRange": [
+        5,
+        7
+      ],
+      "footAnchor": {
+        "x": 92,
+        "y": 244
+      },
+      "handAnchors": {
+        "right": {
+          "x": 41,
+          "y": 134
+        },
+        "left": {
+          "x": 95,
+          "y": 135
+        }
+      }
+    }
+  ]
+}
