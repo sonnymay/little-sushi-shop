@@ -1,5 +1,5 @@
 import { sampleTravel, world, clamp, smooth, foot } from './walking';
-import { Simulation, recipes } from './simulation';
+import { HANDOFF_TICKS, Simulation, recipes } from './simulation';
 import type { Travel } from './simulation';
 import { same, type Point } from './navigation';
 import './style.css';
@@ -42,6 +42,7 @@ const dishes = ['salmon', 'tuna', 'california'] as const;
 const adultHeight = 128;
 const depthScale = (floorY: number) => 1 + (floorY - 430) / 1800;
 const plateHeight = 21;
+const tablePlateSlot = (table: Point): Point => ({ x: table.x - 10, y: table.y - 12 });
 function sprite(name: keyof typeof sprites, x: number, bottom: number, height: number) {
   if (!atlas.complete || !atlas.naturalWidth) return;
   const [sx, sy, sw, sh] = sprites[name];
@@ -215,30 +216,35 @@ function render() {
   text('PICKUP', 635, 273, 12, '#805744');
   round(422, 595, 156, 44, 12, '#a8b8a0'); text('WELCOME', 500, 623, 16, '#ffffff');
   const layers: Layer[] = [], labels: Label[] = [];
+  const server = sim.server, task = server.task;
+  const recipient = task?.kind === 'deliver' && server.phase !== 'pickup'
+    ? sim.customers.find(c => c.id === task.target) : undefined;
+  const handoffProgress = server.phase === 'handoff'
+    ? clamp(1 - (server.handoff - (sim.visualTick - sim.ticks)) / HANDOFF_TICKS) : 0;
   for (const [index, seat] of sim.seats.entries()) {
     const p = world(seat.position);
     layers.push({ y: p.y + 9, draw: () => sprite('chair', p.x, p.y + 9, 70) });
     layers.push({ y: p.y + 28, draw: () => {
       sprite('table', p.x, p.y + 28, 69);
       const customer = sim.customers.find(c => c.id === seat.owner);
-      if (customer?.state === 'eating') sprite(dishes[customer.recipe], p.x - 10, p.y - 12, plateHeight);
-      else if (seat.dirty) ellipse(p.x - 10, p.y - 12, 15, 5, '#eee5d7');
+      const slot = tablePlateSlot(p);
+      if (customer?.state === 'eating') sprite(dishes[customer.recipe], slot.x, slot.y, plateHeight);
+      else if (seat.dirty) ellipse(slot.x, slot.y, 15, 5, '#eee5d7');
       text(seat.dirty ? 'Cleaning soon' : `Table ${index + 1}`, p.x, p.y + 43, 12, '#96795e');
     } });
   }
   const live = new Set<string>();
-  function actor(id: string, entity: { position: Point }, art: Art, value: string, sitting = 0, plate?: number, mealTick?: number) {
+  function actor(id: string, entity: { position: Point }, art: Art, value: string, sitting = 0, mealTick?: number) {
     const edge = sim.travel.get(entity);
     const pose = sampleTravel(entity.position, edge, sim.visualTick);
+    if (entity === server && server.phase === 'handoff') {
+      // All three service points are one tile east of the seated guest.
+      pose.dx = -1; pose.dy = 0;
+    }
     const distance = strideDistance(entity, edge, pose);
     live.add(id); caption(labels, id, value, pose);
-    layers.push({ y: pose.y + 8 + 16 * sitting, draw: () => {
-      drawActor(art, pose, distance, sitting, mealTick);
-      if (plate !== undefined) {
-        const scale = depthScale(pose.y);
-        sprite(dishes[plate], pose.x + (pose.dx < 0 ? -27 : 27) * scale, pose.y + 8 - adultHeight * scale * 0.52, plateHeight * scale);
-      }
-    } });
+    layers.push({ y: pose.y + 8 + 16 * sitting, draw: () => drawActor(art, pose, distance, sitting, mealTick) });
+    return pose;
   }
   for (const [index, guest] of sim.arrivals.entries()) {
     const position = { x: 10.6 + index * 1.55, y: 10.6 };
@@ -252,12 +258,25 @@ function render() {
     if (c.state === 'eating') sitting = 1;
     if (c.state === 'leaving' && inChair) sitting = 1 - smooth(elapsed / 4);
     const status = c.state === 'waiting' ? recipes[c.recipe].name : c.state === 'eating' ? 'So delicious!' : c.personality;
-    actor(String(c.id), c, guests[(c.id - 1) % guests.length], status, sitting, undefined, c.state === 'eating' ? elapsed : undefined);
+    const reaching = c === recipient && handoffProgress > 0.5;
+    const mealTick = reaching ? 0 : c.state === 'eating' ? elapsed : undefined;
+    actor(String(c.id), c, guests[(c.id - 1) % guests.length], status, sitting, mealTick);
   }
-  const server = sim.server, task = server.task;
-  const plate = task?.kind === 'deliver' && server.phase === 'target'
-    ? sim.customers.find(c => c.id === task.target)?.recipe : undefined;
-  actor('server', server, 'server', task?.kind === 'clean' ? 'Mochi · tidying' : task ? 'Mochi · serving' : 'Mochi · ready', 0, plate);
+  const pose = actor('server', server, 'server', task?.kind === 'clean' ? 'Mochi · tidying' : task ? 'Mochi · serving' : 'Mochi · ready');
+  if (recipient) {
+    const scale = depthScale(pose.y);
+    // The front-facing carry uses Mochi's raised right hand (screen left),
+    // keeping the dish in place when Mochi turns toward the table.
+    const handX = pose.x + (pose.dx > 0 ? 27 : -27) * scale;
+    const handY = pose.y + 8 - adultHeight * scale * 0.52;
+    const table = world(sim.seats[recipient.seat].position), slot = tablePlateSlot(table);
+    const t = smooth(handoffProgress);
+    // Draw the carried dish above the tabletop as it lands. On the completion
+    // tick the eating guest's table takes over at exactly the same slot and size.
+    layers.push({ y: server.phase === 'handoff' ? table.y + 28 : pose.y + 8, draw: () =>
+      sprite(dishes[recipient.recipe], handX + (slot.x - handX) * t, handY + (slot.y - handY) * t,
+        plateHeight * (scale + (1 - scale) * t)) });
+  }
   for (const layer of layers.sort((a, b) => a.y - b.y)) layer.draw();
   drawLabels(labels);
   for (const id of captions.keys()) if (!live.has(id)) captions.delete(id);
