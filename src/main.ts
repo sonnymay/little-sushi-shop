@@ -2,13 +2,16 @@ import { sampleTravel, world, clamp, smooth, foot } from './walking';
 import { HANDOFF_TICKS, Simulation, recipes } from './simulation';
 import type { Travel } from './simulation';
 import { same, type Point } from './navigation';
+import { load as loadSave, save as persistSave, clear as clearSave } from './save';
+import { EmoteTracker, emoteForEvent } from './emotes';
+import { SoundEngine } from './audio';
 import './style.css';
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 <main><header><div><p class="eyebrow">A LITTLE PLACE TO SLOW DOWN</p><h1>Little Sushi Shop <span>寿司</span></h1><p>Warm rice. Happy guests. A shop with a life of its own.</p></div><div class="badge">AUTONOMOUS PROTOTYPE · 0.1</div></header>
 <section class="dashboard" aria-label="Restaurant controls"><div><small>SHOP WALLET</small><strong id="coins">100 coins</strong></div><div><small>HAPPY GUESTS</small><strong id="served">0 served</strong></div><div><small>SHOP CLOCK</small><strong id="clock">00:00</strong></div><div class="controls"><button id="pause">Pause</button><button id="speed" aria-label="Change simulation speed">1× speed</button><button id="restart">Restart</button></div></section>
-<div class="layout"><section class="scene"><div class="scene-title"><span>☀ A quiet afternoon</span><span id="activity">The doors are open</span></div><canvas width="1000" height="720" aria-label="Animated sushi restaurant with autonomous guests, a chef, and a server"></canvas><p class="caption">Guests find a seat. Our team takes care of the rest.</p></section><aside><section class="card"><img class="hana-portrait" src="./art/hana.webp" alt="Chef Hana holding sushi"><h2>A sharper knife</h2><p>A little upgrade for chef Hana. New orders prepare 35% faster.</p><button id="upgrade">Upgrade · 75 coins</button><small>One permanent upgrade per session.</small></section><section class="card"><h2>On the menu</h2>${recipes.map(r=>`<div class="menu"><i style="background:${r.color}"></i><span>${r.name}</span><b>${r.price}</b></div>`).join('')}</section><section class="card"><h2>Little moments</h2><ol id="events"></ol></section></aside></div>
-<footer>Watch the flow, improve the shop. <span>Prototype artwork · Progress resets on reload</span></footer></main>`;
+<div class="layout"><section class="scene"><div class="scene-title"><span>☀ A quiet afternoon</span><span id="activity">The doors are open</span></div><canvas width="1000" height="720" aria-label="Animated sushi restaurant with autonomous guests, a chef, and a server"></canvas><p class="caption">Guests find a seat. Our team takes care of the rest.</p></section><aside><section class="card"><img class="hana-portrait" src="./art/hana.webp" alt="Chef Hana holding sushi"><h2>A sharper knife</h2><p>A little upgrade for chef Hana. New orders prepare 35% faster.</p><button id="upgrade">Upgrade · 75 coins</button><small>One permanent upgrade — it stays with your shop.</small></section><section class="card"><h2>On the menu</h2>${recipes.map(r=>`<div class="menu"><i style="background:${r.color}"></i><span>${r.name}</span><b>${r.price}</b></div>`).join('')}</section><section class="card"><h2>Little moments</h2><ol id="events"></ol></section></aside></div>
+<footer>Watch the flow, improve the shop. <span>Prototype artwork · Progress saves automatically</span></footer></main>`;
 const canvas = document.querySelector('canvas')!;
 const ctx = canvas.getContext('2d')!;
 const hana = new Image();
@@ -16,11 +19,39 @@ hana.src = `./art/hana.webp`;
 const preparation = new Image();
 preparation.src = './art/hana-prepares.webp';
 let sim = new Simulation(), speed = 1;
+// Restore the shop's wallet, knife upgrade, and lifetime guest count.
+const savedShop = loadSave();
+sim.coins = savedShop.coins; sim.upgraded = savedShop.chefsKnifeOwned; sim.served = savedShop.totalGuestsServed;
+let lastSaved = { coins: sim.coins, upgraded: sim.upgraded, served: sim.served };
+const sound = new SoundEngine();
+const unlockAudio = () => sound.resume();
+addEventListener('pointerdown', unlockAudio, { once: true });
+addEventListener('keydown', unlockAudio, { once: true });
+// Emote bubbles: guest-state transitions are diffed each tick in trackEvents().
+let emotes = new EmoteTracker();
+const emotePoses = new Map<number, { x: number; y: number }>();
+const prevStates = new Map<number, string>();
+let prevArrivalIds = new Set<number>();
+const biteFlagged = new Set<number>();
+const longWaitFlagged = new Set<number>();
+let prevEarned = sim.earned;
+function spawnEmote(actorId: number, event: string) {
+  const kind = emoteForEvent(event);
+  if (kind) emotes.spawn(actorId, kind, sim.ticks);
+}
 const $ = (id: string) => document.getElementById(id)!;
-$('pause').onclick = () => { sim.paused = !sim.paused; $('pause').textContent = sim.paused ? 'Resume' : 'Pause'; };
-$('speed').onclick = () => { speed = speed === 1 ? 3 : 1; $('speed').textContent = `${speed}× speed`; };
-$('restart').onclick = () => { sim = new Simulation(); captions.clear(); $('pause').textContent = 'Pause'; };
-$('upgrade').onclick = () => sim.buyUpgrade();
+$('pause').onclick = () => { sound.playClick(); sim.paused = !sim.paused; $('pause').textContent = sim.paused ? 'Resume' : 'Pause'; };
+$('speed').onclick = () => { sound.playClick(); speed = speed === 1 ? 3 : 1; $('speed').textContent = `${speed}× speed`; };
+$('restart').onclick = () => {
+  clearSave();
+  sim = new Simulation(); captions.clear();
+  emotes = new EmoteTracker(); emotePoses.clear(); prevStates.clear();
+  prevArrivalIds = new Set(); biteFlagged.clear(); longWaitFlagged.clear();
+  prevEarned = sim.earned;
+  lastSaved = { coins: sim.coins, upgraded: sim.upgraded, served: sim.served };
+  $('pause').textContent = 'Pause';
+};
+$('upgrade').onclick = () => { if (sim.buyUpgrade()) sound.playClick(); };
 function round(x: number, y: number, w: number, h: number, r: number, fill: string, stroke?: string) {
   ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fillStyle = fill; ctx.fill();
   if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 3; ctx.stroke(); }
@@ -234,9 +265,10 @@ function render() {
     } });
   }
   const live = new Set<string>();
-  function actor(id: string, entity: { position: Point }, art: Art, value: string, sitting = 0, mealTick?: number) {
+  function actor(id: string, entity: { position: Point }, art: Art, value: string, sitting = 0, mealTick?: number, emoteId?: number) {
     const edge = sim.travel.get(entity);
     const pose = sampleTravel(entity.position, edge, sim.visualTick);
+    if (emoteId !== undefined) emotePoses.set(emoteId, { x: pose.x, y: pose.y });
     if (entity === server && server.phase === 'handoff') {
       // All three service points are one tile east of the seated guest.
       pose.dx = -1; pose.dy = 0;
@@ -248,7 +280,7 @@ function render() {
   }
   for (const [index, guest] of sim.arrivals.entries()) {
     const position = { x: 10.6 + index * 1.55, y: 10.6 };
-    actor(`line-${guest.id}`, { position }, guests[(guest.id - 1) % guests.length], `Waiting · ${index + 1}`);
+    actor(`line-${guest.id}`, { position }, guests[(guest.id - 1) % guests.length], `Waiting · ${index + 1}`, 0, undefined, guest.id);
   }
   for (const c of sim.customers) {
     const elapsed = c.timer + sim.visualTick - sim.ticks;
@@ -260,7 +292,7 @@ function render() {
     const status = c.state === 'waiting' ? recipes[c.recipe].name : c.state === 'eating' ? 'So delicious!' : c.personality;
     const reaching = c === recipient && handoffProgress > 0.5;
     const mealTick = reaching ? 0 : c.state === 'eating' ? elapsed : undefined;
-    actor(String(c.id), c, guests[(c.id - 1) % guests.length], status, sitting, mealTick);
+    actor(String(c.id), c, guests[(c.id - 1) % guests.length], status, sitting, mealTick, c.id);
   }
   const pose = actor('server', server, 'server', task?.kind === 'clean' ? 'Mochi · tidying' : task ? 'Mochi · serving' : 'Mochi · ready');
   if (recipient) {
@@ -279,6 +311,16 @@ function render() {
   }
   for (const layer of layers.sort((a, b) => a.y - b.y)) layer.draw();
   drawLabels(labels);
+  // Emote bubbles float above the guest's head at their last drawn position.
+  for (const emote of emotes.activeAt(sim.ticks)) {
+    const pose = emotePoses.get(emote.actorId);
+    if (!pose) continue;
+    const y = pose.y - adultHeight * depthScale(pose.y) - 36;
+    ctx.save();
+    round(pose.x - 15, y - 13, 30, 26, 13, '#fffdf4ed');
+    text(emote.kind, pose.x, y + 5, 15);
+    ctx.restore();
+  }
   for (const id of captions.keys()) if (!live.has(id)) captions.delete(id);
   $('coins').textContent = `${sim.coins} coins`; $('served').textContent = `${sim.served} served`;
   const seconds = Math.floor(sim.ticks / 10); $('clock').textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
@@ -286,6 +328,35 @@ function render() {
   const upgrade = $('upgrade') as HTMLButtonElement; upgrade.disabled = sim.upgraded || sim.coins < 75; upgrade.textContent = sim.upgraded ? 'Upgraded · happy chopping!' : 'Upgrade · 75 coins';
   $('events').innerHTML = sim.events.map(event => `<li>${event}</li>`).join('');
 }
+// Diff guest states after each advance: fire emote bubbles and sounds on
+// transitions, and persist the wallet whenever it changes.
+function trackEvents() {
+  for (const c of sim.customers) {
+    const prev = prevStates.get(c.id);
+    if (prev === 'walking' && c.state === 'waiting') spawnEmote(c.id, 'seated');
+    if (prev === 'waiting' && c.state === 'eating') { spawnEmote(c.id, 'served'); sound.playServed(); }
+    if (c.state === 'eating' && c.timer >= 10 && !biteFlagged.has(c.id)) { biteFlagged.add(c.id); spawnEmote(c.id, 'first-bite'); }
+    if (c.state === 'waiting' && c.timer > 300 && !longWaitFlagged.has(c.id)) { longWaitFlagged.add(c.id); spawnEmote(c.id, 'waiting-long'); }
+    if (prev === 'eating' && c.state === 'leaving') spawnEmote(c.id, 'leaving-happy');
+    prevStates.set(c.id, c.state);
+  }
+  const customerIds = new Set(sim.customers.map(c => c.id));
+  for (const id of [...prevStates.keys()]) {
+    if (!customerIds.has(id)) { prevStates.delete(id); biteFlagged.delete(id); longWaitFlagged.delete(id); }
+  }
+  const arrivalIds = new Set(sim.arrivals.map(g => g.id));
+  for (const id of prevArrivalIds) {
+    if (!arrivalIds.has(id) && !customerIds.has(id)) spawnEmote(id, 'turned-away');
+  }
+  prevArrivalIds = arrivalIds;
+  if (sim.earned > prevEarned) sound.playCoin();
+  prevEarned = sim.earned;
+  emotes.prune(sim.ticks);
+  if (sim.coins !== lastSaved.coins || sim.upgraded !== lastSaved.upgraded || sim.served !== lastSaved.served) {
+    persistSave({ coins: sim.coins, chefsKnifeOwned: sim.upgraded, totalGuestsServed: sim.served });
+    lastSaved = { coins: sim.coins, upgraded: sim.upgraded, served: sim.served };
+  }
+}
 let previous = performance.now();
-function frame(now: number) { sim.advance(Math.min((now - previous) / 1000 * speed, 0.5)); previous = now; render(); requestAnimationFrame(frame); }
+function frame(now: number) { sim.advance(Math.min((now - previous) / 1000 * speed, 0.5)); trackEvents(); previous = now; render(); requestAnimationFrame(frame); }
 requestAnimationFrame(frame);
