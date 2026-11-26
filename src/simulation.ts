@@ -5,12 +5,13 @@ export const recipes = [
   { name: 'Tuna maki', price: 15, ticks: 45, color: '#d96876' },
   { name: 'California roll', price: 18, ticks: 55, color: '#a3b97d' },
 ];
+export const HANDOFF_TICKS = 8;
 export type CustomerState = 'walking' | 'waiting' | 'eating' | 'leaving';
 export interface Customer { id: number; seat: number; position: Point; state: CustomerState; timer: number; patience: number; recipe: number; personality: string }
 export interface Seat { position: Point; owner: number | null; dirty: boolean }
 export interface Order { customer: number; recipe: number; status: 'placed' | 'preparing' | 'ready' | 'delivering' | 'served' }
 export interface Task { kind: 'deliver' | 'clean'; target: number }
-export interface Server { position: Point; task: Task | null; phase: 'pickup' | 'target'; timer: number }
+export interface Server { position: Point; task: Task | null; phase: 'pickup' | 'target' | 'handoff'; timer: number; handoff: number }
 export interface Travel { from: Point; to: Point; tick: number; continued: boolean; final: boolean }
 export class Simulation {
   ticks = 0; coins = 100; earned = 0; served = 0; lost = 0; upgraded = false; paused = false;
@@ -21,7 +22,7 @@ export class Simulation {
   orders: Order[] = [];
   tasks: Task[] = [];
   chef: { customer: number; recipe: number; duration: number; remaining: number } | null = null;
-  server: Server = { position: { x: 9, y: 3 }, task: null, phase: 'pickup', timer: 0 };
+  server: Server = { position: { x: 9, y: 3 }, task: null, phase: 'pickup', timer: 0, handoff: 0 };
   events: string[] = ['Welcome! Your tiny shop runs itself.'];
   readonly travel = new WeakMap<{ position: Point }, Travel>();
   get visualTick() { return this.ticks + this.accumulator * 10; }
@@ -66,12 +67,15 @@ export class Simulation {
   private enqueue(task: Task) {
     if (!this.tasks.some(t => t.kind === task.kind && t.target === task.target) && !(this.server.task?.kind === task.kind && this.server.task.target === task.target)) this.tasks.push(task);
   }
+  private clearDelivery() {
+    const s = this.server;
+    s.task = null; s.phase = 'pickup'; s.timer = 0; s.handoff = 0;
+  }
   private depart(c: Customer) {
-
     this.orders = this.orders.filter(o => o.customer !== c.id);
     this.tasks = this.tasks.filter(t => t.kind !== 'deliver' || t.target !== c.id);
     if (this.chef?.customer === c.id) this.chef = null;
-    if (this.server.task?.kind === 'deliver' && this.server.task.target === c.id) this.server.task = null;
+    if (this.server.task?.kind === 'deliver' && this.server.task.target === c.id) this.clearDelivery();
     c.state = 'leaving'; c.timer = 0;
   }
   tick() {
@@ -167,12 +171,19 @@ export class Simulation {
     }
     const order = this.orders.find(o => o.customer === task.target);
     const customer = this.customers.find(c => c.id === task.target && c.state === 'waiting');
-    if (!order || !customer) { s.task = null; return; }
+    if (!order || !customer) { this.clearDelivery(); return; }
     if (s.phase === 'pickup') {
       if (this.move(s, pickup)) { order.status = 'delivering'; s.phase = 'target'; }
-    } else if (this.move(s, servicePoint(customer.position))) {
-      order.status = 'served'; customer.state = 'eating'; customer.timer = 0; s.task = null;
+    } else if (s.phase === 'target') {
+      if (this.move(s, servicePoint(customer.position))) {
+        s.phase = 'handoff'; s.handoff = HANDOFF_TICKS;
+      }
+    } else if (--s.handoff === 0) {
+      order.status = 'served'; customer.state = 'eating'; customer.timer = 0;
+      this.clearDelivery();
     }
-    if (s.task && s.timer > 200) { order.status = 'ready'; s.task = null; this.enqueue(task); }
+    if (s.task && s.timer > 200) {
+      order.status = 'ready'; this.clearDelivery(); this.enqueue(task);
+    }
   }
 }

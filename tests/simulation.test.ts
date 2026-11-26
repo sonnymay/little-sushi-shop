@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { Simulation, recipes } from '../src/simulation';
-import { pathfind, obstacles, same } from '../src/navigation';
+import { HANDOFF_TICKS, Simulation, recipes } from '../src/simulation';
+import { pathfind, obstacles, same, servicePoint } from '../src/navigation';
 
 describe('navigation', () => {
   it('finds a shortest route around an obstacle, never crossing it', () => {
@@ -14,6 +14,110 @@ describe('navigation', () => {
     expect(pathfind({ x: 0, y: 0 }, { x: 2, y: 2 }, new Set(['1,0', '0,1']))).toBeNull();
     expect(pathfind({ x: 0, y: 0 }, { x: 15, y: 0 })).toBeNull();
     expect(pathfind({ x: 0, y: 0 }, { x: 0, y: 0 })).toEqual([]);
+  });
+});
+
+describe('plate handoff', () => {
+  function arriveAtFirstTable() {
+    const sim = new Simulation();
+    for (let i = 0; i < 300; i++) {
+      sim.tick();
+      const server = sim.server, edge = sim.travel.get(server);
+      const guest = sim.customers.find(c => server.task?.kind === 'deliver' && server.task.target === c.id);
+      // Test arrival against the end of the actual three-tick walking edge,
+      // independent of when the server code chooses to start the handoff.
+      if (guest && server.phase === 'target' && edge?.final && sim.ticks === edge.tick + 2
+          && same(edge.to, servicePoint(sim.seats[guest.seat].position))) {
+        const order = sim.orders.find(o => o.customer === guest.id)!;
+        sim.tick();
+        return { sim, server, guest, order };
+      }
+    }
+    throw new Error('First delivery never reached its table');
+  }
+
+  it('starts a full handoff on arrival while the guest waits for the dish', () => {
+    const { server, guest, order } = arriveAtFirstTable();
+    expect(server).toMatchObject({ phase: 'handoff', handoff: 8, task: { kind: 'deliver', target: guest.id } });
+    expect(order.status).toBe('delivering');
+    expect(guest.state).toBe('waiting');
+  });
+
+  it('holds position for exactly eight ticks and starts eating on the last tick', () => {
+    const { sim, server, guest, order } = arriveAtFirstTable();
+    const arrival = sim.ticks, edge = sim.travel.get(server), position = { ...server.position };
+    for (let elapsed = 1; elapsed < HANDOFF_TICKS; elapsed++) {
+      sim.tick();
+      expect(server.handoff).toBe(HANDOFF_TICKS - elapsed);
+      expect(sim.travel.get(server)).toBe(edge);
+      expect(server.position).toEqual(position);
+      expect(order.status).toBe('delivering');
+      expect(guest.state).toBe('waiting');
+    }
+    sim.tick();
+    expect(sim.ticks - arrival).toBe(8);
+    expect(order.status).toBe('served');
+    expect(guest).toMatchObject({ state: 'eating', timer: 0 });
+    expect(server).toMatchObject({ task: null, phase: 'pickup', handoff: 0, timer: 0, position });
+  });
+
+  it('keeps every handoff delivering and every served order paired with an eating guest', () => {
+    const sim = new Simulation(), recipesHandedOver = new Set<number>();
+    for (let i = 0; i < 3000; i++) {
+      sim.tick();
+      if (sim.server.phase === 'handoff') {
+        const order = sim.orders.find(o => o.customer === sim.server.task?.target)!;
+        expect(order.status).toBe('delivering');
+        expect(sim.customers.find(c => c.id === order.customer)?.state).toBe('waiting');
+        recipesHandedOver.add(order.recipe);
+      }
+      for (const order of sim.orders.filter(o => o.status === 'served')) {
+        expect(sim.customers.find(c => c.id === order.customer)?.state).toBe('eating');
+      }
+    }
+    expect(recipesHandedOver.size).toBe(recipes.length);
+  });
+
+  it('cancels a partially completed handoff and serves subsequent guests', () => {
+    const { sim, server, guest } = arriveAtFirstTable();
+    sim.tick();
+    guest.patience = guest.timer;
+    sim.tick();
+    expect(guest.state).toBe('leaving');
+    expect(sim.orders.some(o => o.customer === guest.id)).toBe(false);
+    expect(sim.tasks).not.toContainEqual({ kind: 'deliver', target: guest.id });
+    expect(server).toMatchObject({ phase: 'pickup', handoff: 0, task: null });
+    expect(sim.earned).toBe(0);
+    for (let i = 0; i < 600; i++) sim.tick();
+    expect(sim.served).toBeGreaterThan(0);
+    expect(sim.lost).toBe(1);
+  });
+
+  it('freezes the handoff counter and fractional animation clock on pause', () => {
+    const { sim, server, order } = arriveAtFirstTable();
+    sim.advance(0.15);
+    expect(server.handoff).toBe(HANDOFF_TICKS - 1);
+    const time = sim.visualTick;
+    sim.paused = true;
+    sim.advance(0.5); sim.tick();
+    expect(sim.visualTick).toBe(time);
+    expect(server.handoff).toBe(HANDOFF_TICKS - 1);
+    expect(order.status).toBe('delivering');
+    sim.paused = false;
+    sim.advance(0.05);
+    expect(server.handoff).toBe(HANDOFF_TICKS - 2);
+  });
+
+  it('clears the handoff on a delivery timeout and retries the same order once', () => {
+    const { sim, server, guest, order } = arriveAtFirstTable();
+    server.timer = 200;
+    sim.tick();
+    expect(order.status).toBe('ready');
+    expect(server).toMatchObject({ phase: 'pickup', handoff: 0, task: null });
+    expect(sim.tasks.filter(t => t.kind === 'deliver' && t.target === guest.id)).toHaveLength(1);
+    for (let i = 0; i < 150 && guest.state === 'waiting'; i++) sim.tick();
+    expect(guest.state).toBe('eating');
+    expect(order.status).toBe('served');
   });
 });
 describe('autonomous service', () => {

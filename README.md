@@ -6,7 +6,7 @@ A small autonomous sushi restaurant simulation written in TypeScript. Guests res
 
 Watch Hana at the counter around 3 seconds at 1×. She gathers rice, presses it and presents the current order. Finished plates wait at pickup until Mochi collects them. [Watch the 6-second gameplay clip](docs/hana-prepares.mp4).
 
-Watch the window table after the first delivery (around 9 seconds at 1×). The courier reaches with chopsticks, lifts salmon nigiri, and smiles while chewing. Each guest has their own illustrated sequence for their usual order.
+Restart at 1× and watch the window table from 00:09. Mochi turns toward the courier and takes 0.8 seconds to set down the salmon nigiri. The courier reaches with chopsticks halfway through, then lifts a bite and smiles. [Watch the handoff](docs/mochi-handoff.mp4). Each guest has their own illustrated sequence for their usual order.
 
 ## Run
 
@@ -40,7 +40,7 @@ This is a functional foundation, **not the finished polished art release**. Pers
 
 `src/main.ts` draws original smooth Canvas shapes and interpolates authoritative positions. Canvas 2D is deliberately used instead of Phaser for this first small scene; the independent simulation can be integrated into Phaser later if animation tooling warrants it. No external image assets are required; web fonts have system fallbacks.
 
-`tests/simulation.test.ts` verifies pathfinding, exclusive reservations, exact payments, valid delivery targets, bounded task queues, cancellation, pause and upgrade behavior. A 30,000-tick soak test exercises 50 simulated minutes. `e2e/restaurant.spec.ts` tests the production build in Chromium, including the service loop, controls and mobile overflow. These browser tests have not yet run successfully in the authoring environment (Chromium launch restriction). For an existing Chromium installation, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to its executable path.
+`tests/simulation.test.ts` verifies pathfinding, exclusive reservations, exact payments, valid delivery targets, bounded task queues, cancellation, pause and upgrade behavior. A 30,000-tick soak test exercises 50 simulated minutes. `e2e/restaurant.spec.ts` tests the production build in Chromium, including the service loop, controls and mobile overflow. For an existing Chromium installation, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to its executable path.
 
 ## Deployment
 
@@ -48,9 +48,8 @@ This is a functional foundation, **not the finished polished art release**. Pers
 
 ## Next priorities
 
-1. Give Mochi a visible handoff when a plate reaches the table.
-2. Fix visual overlap at shared service points.
-3. Replace prototype shapes with cohesive original hand-drawn chibi animation.
-4. Add richer personalities, then consider layout upgrades.
+1. Fix visual overlap at shared service points.
+2. Replace prototype shapes with cohesive original hand-drawn chibi animation.
+3. Add richer personalities, then consider layout upgrades.
 
 See [progress](docs/progress.md) for verified delivery status. Run tests and build before each focused change; never represent placeholders as finished art.
