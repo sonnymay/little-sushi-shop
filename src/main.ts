@@ -74,6 +74,22 @@ const adultHeight = 128;
 const depthScale = (floorY: number) => 1 + (floorY - 430) / 1800;
 const plateHeight = 21;
 const tablePlateSlot = (table: Point): Point => ({ x: table.x - 10, y: table.y - 12 });
+
+function handoffImage(pose: string) {
+  const image = new Image();
+  image.src = `./art/mochi-handoff-${pose}.webp`;
+  return image;
+}
+
+// Pixel coordinates from mochi.json. The release pose has an empty tray.
+const mochiHandoff = {
+  width: 153, height: 252, foot: { x: 92, y: 244 }, detachTick: 4,
+  frames: [
+    { endTick: 2, image: handoffImage('lean'), trayCenter: { x: 52, y: 128 } },
+    { endTick: 5, image: handoffImage('extend'), trayCenter: { x: 46, y: 141 } },
+    { endTick: HANDOFF_TICKS, image: handoffImage('release'), trayCenter: null },
+  ],
+} as const;
 function sprite(name: keyof typeof sprites, x: number, bottom: number, height: number) {
   if (!atlas.complete || !atlas.naturalWidth) return;
   const [sx, sy, sw, sh] = sprites[name];
@@ -161,9 +177,15 @@ function gait(art: Art, pose: Pose, distance: number, height: number, bottom: nu
 const biteArt = new Image();
 biteArt.src = './art/bites.webp';
 
-function drawActor(art: Art, pose: Pose, distance: number, sitting: number, mealTick?: number) {
+function drawActor(art: Art, pose: Pose, distance: number, sitting: number, mealTick?: number, handoffImage?: HTMLImageElement) {
   const height = adultHeight * depthScale(pose.y), bottom = pose.y + 8 + 16 * sitting;
   shadow(pose.x, pose.y + 7, height * 0.22);
+  if (handoffImage) {
+    const scale = height / mochiHandoff.height;
+    ctx.drawImage(handoffImage, pose.x - mochiHandoff.foot.x * scale, bottom - mochiHandoff.foot.y * scale,
+      mochiHandoff.width * scale, height);
+    return;
+  }
   if (mealTick !== undefined && art !== 'server' && biteArt.complete && biteArt.naturalWidth) {
     // Reach, lift, then linger on the happy expression. The simulation clock
     // freezes the gesture on pause and scales it along with service at 3×.
@@ -250,8 +272,13 @@ function render() {
   const server = sim.server, task = server.task;
   const recipient = task?.kind === 'deliver' && server.phase !== 'pickup'
     ? sim.customers.find(c => c.id === task.target) : undefined;
-  const handoffProgress = server.phase === 'handoff'
-    ? clamp(1 - (server.handoff - (sim.visualTick - sim.ticks)) / HANDOFF_TICKS) : 0;
+  const handoffElapsed = server.phase === 'handoff'
+    ? HANDOFF_TICKS - server.handoff + Math.max(0, sim.visualTick - sim.ticks) : 0;
+  const handoffProgress = clamp(handoffElapsed / HANDOFF_TICKS);
+  const handoffTick = Math.floor(handoffElapsed);
+  // Use the existing pose and dish path together if any part of the set is missing.
+  const handoffFrame = server.phase === 'handoff' && mochiHandoff.frames.every(f => f.image.complete && f.image.naturalWidth > 0)
+    ? mochiHandoff.frames.find(f => handoffTick < f.endTick) : undefined;
   for (const [index, seat] of sim.seats.entries()) {
     const p = world(seat.position);
     layers.push({ y: p.y + 9, draw: () => sprite('chair', p.x, p.y + 9, 70) });
@@ -275,7 +302,8 @@ function render() {
     }
     const distance = strideDistance(entity, edge, pose);
     live.add(id); caption(labels, id, value, pose);
-    layers.push({ y: pose.y + 8 + 16 * sitting, draw: () => drawActor(art, pose, distance, sitting, mealTick) });
+    layers.push({ y: pose.y + 8 + 16 * sitting, draw: () =>
+      drawActor(art, pose, distance, sitting, mealTick, entity === server ? handoffFrame?.image : undefined) });
     return pose;
   }
   for (const [index, guest] of sim.arrivals.entries()) {
@@ -299,10 +327,18 @@ function render() {
     const scale = depthScale(pose.y);
     // The front-facing carry uses Mochi's raised right hand (screen left),
     // keeping the dish in place when Mochi turns toward the table.
-    const handX = pose.x + (pose.dx > 0 ? 27 : -27) * scale;
-    const handY = pose.y + 8 - adultHeight * scale * 0.52;
+    let handX = pose.x + (pose.dx > 0 ? 27 : -27) * scale;
+    let handY = pose.y + 8 - adultHeight * scale * 0.52;
+    if (handoffFrame) {
+      const tray = handoffFrame.trayCenter ?? mochiHandoff.frames[1].trayCenter;
+      const pixelScale = adultHeight * scale / mochiHandoff.height;
+      handX = pose.x + (tray.x - mochiHandoff.foot.x) * pixelScale;
+      // sprite() positions a dish by its bottom edge. Center the dish on the tray.
+      handY = pose.y + 8 + (tray.y - mochiHandoff.foot.y) * pixelScale + plateHeight * scale / 2;
+    }
     const table = world(sim.seats[recipient.seat].position), slot = tablePlateSlot(table);
-    const t = smooth(handoffProgress);
+    const onTray = handoffFrame && handoffTick < mochiHandoff.detachTick;
+    const t = onTray ? 0 : smooth(handoffProgress);
     // Draw the carried dish above the tabletop as it lands. On the completion
     // tick the eating guest's table takes over at exactly the same slot and size.
     layers.push({ y: server.phase === 'handoff' ? table.y + 28 : pose.y + 8, draw: () =>
