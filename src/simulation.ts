@@ -6,6 +6,7 @@ export const recipes = [
   { name: 'California roll', price: 18, ticks: 55, color: '#a3b97d' },
 ];
 export const HANDOFF_TICKS = 8;
+export const CLEANING_TICKS = 10;
 export type CustomerState = 'walking' | 'waiting' | 'eating' | 'leaving';
 export interface Customer { id: number; seat: number; position: Point; state: CustomerState; timer: number; patience: number; recipe: number; personality: string }
 export interface Seat { position: Point; owner: number | null; dirty: boolean }
@@ -164,7 +165,7 @@ export class Simulation {
       const seat = this.seats[task.target];
       if (this.move(s, servicePoint(seat.position))) {
         if (s.phase === 'pickup') { s.phase = 'target'; s.timer = 0; }
-        else if (s.timer >= 10) { seat.dirty = false; s.task = null; }
+        else if (s.timer >= CLEANING_TICKS) { seat.dirty = false; s.task = null; }
       }
       else if (s.timer > 200) { s.task = null; this.enqueue(task); }
       return;

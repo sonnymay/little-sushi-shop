@@ -1,5 +1,5 @@
 import { sampleTravel, world, clamp, smooth, foot } from './walking';
-import { HANDOFF_TICKS, Simulation, recipes } from './simulation';
+import { CLEANING_TICKS, HANDOFF_TICKS, Simulation, recipes } from './simulation';
 import type { Travel } from './simulation';
 import { same, type Point } from './navigation';
 import { load as loadSave, save as persistSave, clear as clearSave } from './save';
@@ -18,6 +18,8 @@ const hana = new Image();
 hana.src = `./art/hana.webp`;
 const preparation = new Image();
 preparation.src = './art/hana-prepares.webp';
+const cleaning = new Image();
+cleaning.src = './art/mochi-cleaning.webp';
 let sim = new Simulation(), speed = 1;
 // Restore the shop's wallet, knife upgrade, and lifetime guest count.
 const savedShop = loadSave();
@@ -215,6 +217,29 @@ function drawActor(art: Art, pose: Pose, distance: number, sitting: number, meal
   ctx.restore();
 }
 
+// Pivot about Mochi's soles so the cloth follows a low arc over the table.
+function polishTable(pose: Pose, progress: number) {
+  const height = adultHeight * depthScale(pose.y);
+  const width = height * cleaning.naturalWidth / cleaning.naturalHeight;
+  shadow(pose.x, pose.y + 7, height * 0.22);
+  ctx.save();
+  ctx.translate(pose.x, pose.y + 8);
+  const stroke = Math.sin(Math.PI * clamp(progress / 0.8) * 2) ** 2;
+  ctx.rotate(-0.23 - 0.24 * stroke);
+  ctx.drawImage(cleaning, -width * 0.55, -height, width, height);
+  ctx.restore();
+}
+
+function shine(x: number, y: number, size: number) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - size);
+  ctx.quadraticCurveTo(x + 1, y - 1, x + size * 0.72, y);
+  ctx.quadraticCurveTo(x + 1, y + 1, x, y + size);
+  ctx.quadraticCurveTo(x - 1, y + 1, x - size * 0.72, y);
+  ctx.quadraticCurveTo(x - 1, y - 1, x, y - size);
+  ctx.fillStyle = '#fff5cc'; ctx.fill();
+}
+
 function caption(labels: Label[], id: string, value: string, pose: Pose) {
   let entry = captions.get(id);
   if (!entry || entry.value !== value) {
@@ -270,6 +295,8 @@ function render() {
   round(422, 595, 156, 44, 12, '#a8b8a0'); text('WELCOME', 500, 623, 16, '#ffffff');
   const layers: Layer[] = [], labels: Label[] = [];
   const server = sim.server, task = server.task;
+  const polishing = task?.kind === 'clean' && server.phase === 'target';
+  const wipe = clamp((server.timer + sim.visualTick - sim.ticks) / CLEANING_TICKS);
   const recipient = task?.kind === 'deliver' && server.phase !== 'pickup'
     ? sim.customers.find(c => c.id === task.target) : undefined;
   const handoffElapsed = server.phase === 'handoff'
@@ -287,8 +314,16 @@ function render() {
       const customer = sim.customers.find(c => c.id === seat.owner);
       const slot = tablePlateSlot(p);
       if (customer?.state === 'eating') sprite(dishes[customer.recipe], slot.x, slot.y, plateHeight);
-      else if (seat.dirty) ellipse(slot.x, slot.y, 15, 5, '#eee5d7');
-      text(seat.dirty ? 'Cleaning soon' : `Table ${index + 1}`, p.x, p.y + 43, 12, '#96795e');
+      else if (seat.dirty) {
+        const cleaningHere = polishing && task.target === index;
+        if (!cleaningHere) ellipse(slot.x, slot.y, 15, 5, '#eee5d7');
+        else if (wipe > 0.56) {
+          const flash = Math.sin(Math.PI * (wipe - 0.56) / 0.44);
+          shine(p.x + 4, p.y - 22, 10 * flash);
+          shine(p.x - 6, p.y - 14, 4 * flash);
+        }
+      }
+      text(polishing && task.target === index ? 'Polishing' : seat.dirty ? 'Cleaning soon' : `Table ${index + 1}`, p.x, p.y + 43, 12, '#96795e');
     } });
   }
   const live = new Set<string>();
@@ -302,8 +337,13 @@ function render() {
     }
     const distance = strideDistance(entity, edge, pose);
     live.add(id); caption(labels, id, value, pose);
-    layers.push({ y: pose.y + 8 + 16 * sitting, draw: () =>
-      drawActor(art, pose, distance, sitting, mealTick, entity === server ? handoffFrame?.image : undefined) });
+    if (entity === server && polishing && cleaning.complete && cleaning.naturalWidth > 0) {
+      // The cloth passes over the near edge of the tabletop.
+      layers.push({ y: pose.y + 29, draw: () => polishTable(pose, wipe) });
+    } else {
+      layers.push({ y: pose.y + 8 + 16 * sitting, draw: () =>
+        drawActor(art, pose, distance, sitting, mealTick, entity === server ? handoffFrame?.image : undefined) });
+    }
     return pose;
   }
   for (const [index, guest] of sim.arrivals.entries()) {

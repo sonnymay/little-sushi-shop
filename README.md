@@ -8,6 +8,8 @@ Watch Hana at the counter around 3 seconds at 1×. She gathers rice, presses it 
 
 Restart at 1× and watch the window table from 00:09. Mochi turns toward the courier and takes 0.8 seconds to set down the salmon nigiri. The courier reaches with chopsticks halfway through, then lifts a bite and smiles. [Watch the handoff](docs/mochi-handoff.mp4). Each guest has their own illustrated sequence for their usual order.
 
+At 1×, watch the window table from 00:18.9 to 00:19.9 on a fresh run. After the courier leaves, Mochi clears the plate, gives the table two quick wipes, and leaves a little glint before the next guest can sit. [Watch Mochi polish the table](docs/mochi-polishes.mp4).
+
 ## Run
 
 Requires Node.js 22.12+ and npm.
@@ -27,10 +29,10 @@ npm run test:e2e
 - Three sushi recipes, FIFO staff task queue, patience and cancellation cleanup.
 - A deterministic 10 Hz simulation, shortest-path grid navigation, smooth Canvas rendering.
 - Exact-once settlement, 100 starting coins, 75-coin one-time chef upgrade.
-- Pause, restart and 3× speed controls. Reloading resets progress.
+- Pause, restart and 3× speed controls. The wallet, knife upgrade, and lifetime guest count survive a reload. Restart clears the save.
 - Original painted chibi characters, four-direction walking, and three illustrated dining sequences.
 
-This is a functional foundation, **not the finished polished art release**. Personalities currently affect seat preference, recipe choice, eating duration and patience. Layout editing, persistence and sound are still future work. NPCs reserve aisle cells and route around furniture. Orders are placed upon seating, without a waiter order-taking visit. Up to three guests wait by the entrance. Clean seats go to the longest-waiting guest. Guests leave after 24 simulated seconds in line or turn away if the line is full.
+This is a functional foundation, **not the finished polished art release**. Personalities currently affect seat preference, recipe choice, eating duration and patience. Layout editing is still future work. NPCs reserve aisle cells and route around furniture. Orders are placed upon seating, without a waiter order-taking visit. Up to three guests wait by the entrance. Clean seats go to the longest-waiting guest. Guests leave after 24 simulated seconds in line or turn away if the line is full.
 
 ## Architecture
 
