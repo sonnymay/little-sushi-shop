@@ -7,8 +7,10 @@ export const recipes = [
 ];
 export const HANDOFF_TICKS = 8;
 export const CLEANING_TICKS = 10;
+export const WAVE_TICKS = 18;
+export const FIRST_BITE_TICK = 10;
 export type CustomerState = 'walking' | 'waiting' | 'eating' | 'leaving';
-export interface Customer { id: number; seat: number; position: Point; state: CustomerState; timer: number; patience: number; recipe: number; personality: string }
+export interface Customer { id: number; seat: number; position: Point; state: CustomerState; timer: number; patience: number; recipe: number; personality: string; awaitingWave?: boolean }
 export interface Seat { position: Point; owner: number | null; dirty: boolean }
 export interface Order { customer: number; recipe: number; status: 'placed' | 'preparing' | 'ready' | 'delivering' | 'served' }
 export interface Task { kind: 'deliver' | 'clean'; target: number }
@@ -24,6 +26,7 @@ export class Simulation {
   tasks: Task[] = [];
   chef: { customer: number; recipe: number; duration: number; remaining: number } | null = null;
   server: Server = { position: { x: 9, y: 3 }, task: null, phase: 'pickup', timer: 0, handoff: 0 };
+  waveUntil = 0;
   events: string[] = ['Welcome! Your tiny shop runs itself.'];
   readonly travel = new WeakMap<{ position: Point }, Travel>();
   get visualTick() { return this.ticks + this.accumulator * 10; }
@@ -119,6 +122,9 @@ export class Simulation {
         this.orders.push({ customer: c.id, recipe: c.recipe, status: 'placed' });
       } else if ((c.state === 'walking' || c.state === 'waiting') && c.timer > c.patience) {
         this.lost++; this.log(`Guest #${c.id} ran out of patience.`); this.depart(c);
+      } else if (c.state === 'eating' && c.personality === 'Foodie' && c.timer === FIRST_BITE_TICK) {
+        c.awaitingWave = true;
+        this.log(`Table ${c.seat + 1}: “Thank you, Hana!”`);
       } else if (c.state === 'eating' && c.timer >= 40 + c.recipe * 10) {
         const price = recipes[c.recipe].price;
         this.coins += price; this.earned += price; this.served++;
@@ -151,6 +157,15 @@ export class Simulation {
       const order = this.orders.find(o => o.customer === this.chef!.customer);
       if (order) { order.status = 'ready'; this.enqueue({ kind: 'deliver', target: order.customer }); }
       this.chef = null;
+    }
+    if (this.chef) this.waveUntil = 0;
+    else if (this.ticks >= this.waveUntil) {
+      const foodie = this.customers.find(c => c.awaitingWave && c.state === 'eating' && c.timer >= FIRST_BITE_TICK + 5);
+      if (foodie) {
+        foodie.awaitingWave = false;
+        this.waveUntil = this.ticks + WAVE_TICKS;
+        this.log(`Hana waves back to Table ${foodie.seat + 1}.`);
+      }
     }
     this.workServer();
   }

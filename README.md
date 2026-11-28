@@ -10,6 +10,8 @@ Restart at 1× and watch the window table from 00:09. Mochi turns toward the cou
 
 At 1×, watch the window table from 00:18.9 to 00:19.9 on a fresh run. After the courier leaves, Mochi clears the plate, gives the table two quick wipes, and leaves a little glint before the next guest can sit. [Watch Mochi polish the table](docs/mochi-polishes.mp4).
 
+On a fresh run at 1×, watch the middle table at 00:18. After tasting the tuna maki, the foodie calls “Thank you, Hana!” Hana finishes her current order and waves back from the counter around 00:20.4. [Watch their exchange](docs/foodie-thanks.mp4).
+
 ## Run
 
 Requires Node.js 22.12+ and npm.

@@ -1,5 +1,5 @@
 import { sampleTravel, world, clamp, smooth, foot } from './walking';
-import { CLEANING_TICKS, HANDOFF_TICKS, Simulation, recipes } from './simulation';
+import { FIRST_BITE_TICK, WAVE_TICKS, CLEANING_TICKS, HANDOFF_TICKS, Simulation, recipes } from './simulation';
 import type { Travel } from './simulation';
 import { same, type Point } from './navigation';
 import { load as loadSave, save as persistSave, clear as clearSave } from './save';
@@ -16,6 +16,8 @@ const canvas = document.querySelector('canvas')!;
 const ctx = canvas.getContext('2d')!;
 const hana = new Image();
 hana.src = `./art/hana.webp`;
+const wavingHana = new Image();
+wavingHana.src = './art/hana-wave.webp';
 const preparation = new Image();
 preparation.src = './art/hana-prepares.webp';
 const cleaning = new Image();
@@ -283,6 +285,17 @@ function render() {
     ctx.drawImage(preparation, stage * 192, 0, 192, 256,
       500 - width / 2, 258 - chefHeight + press, width, chefHeight);
     if (stage === 2) sprite(dishes[chef.recipe], 501, 258 - chefHeight * 0.24, chefHeight * 0.17);
+  } else if (sim.visualTick < sim.waveUntil && wavingHana.complete && wavingHana.naturalWidth) {
+    const progress = clamp(1 - (sim.waveUntil - sim.visualTick) / WAVE_TICKS);
+    const sway = Math.sin(progress * Math.PI * 4) * Math.sin(progress * Math.PI);
+    const width = chefHeight * wavingHana.naturalWidth / wavingHana.naturalHeight;
+    ctx.save();
+    ctx.translate(500, 258);
+    ctx.rotate(sway * 0.055);
+    ctx.drawImage(wavingHana, -width / 2, -chefHeight, width, chefHeight);
+    ctx.restore();
+    round(454, 258 - chefHeight - 20, 92, 18, 9, '#fffaf0');
+    text('My pleasure!', 500, 258 - chefHeight - 7, 12);
   } else if (hana.complete && hana.naturalWidth) {
     const width = chefHeight * hana.naturalWidth / hana.naturalHeight;
     const breath = Math.sin(sim.visualTick * 0.22) * 0.7;
@@ -357,7 +370,9 @@ function render() {
     if (c.state === 'waiting') sitting = smooth(elapsed / 4);
     if (c.state === 'eating') sitting = 1;
     if (c.state === 'leaving' && inChair) sitting = 1 - smooth(elapsed / 4);
-    const status = c.state === 'waiting' ? recipes[c.recipe].name : c.state === 'eating' ? 'So delicious!' : c.personality;
+    const sayingThanks = c.personality === 'Foodie' && c.state === 'eating' &&
+      c.timer >= FIRST_BITE_TICK && c.timer < FIRST_BITE_TICK + 20;
+    const status = sayingThanks ? 'Thank you, Hana!' : c.state === 'waiting' ? recipes[c.recipe].name : c.state === 'eating' ? 'So delicious!' : c.personality;
     const reaching = c === recipient && handoffProgress > 0.5;
     const mealTick = reaching ? 0 : c.state === 'eating' ? elapsed : undefined;
     actor(String(c.id), c, guests[(c.id - 1) % guests.length], status, sitting, mealTick, c.id);
@@ -411,7 +426,7 @@ function trackEvents() {
     const prev = prevStates.get(c.id);
     if (prev === 'walking' && c.state === 'waiting') spawnEmote(c.id, 'seated');
     if (prev === 'waiting' && c.state === 'eating') { spawnEmote(c.id, 'served'); sound.playServed(); }
-    if (c.state === 'eating' && c.timer >= 10 && !biteFlagged.has(c.id)) { biteFlagged.add(c.id); spawnEmote(c.id, 'first-bite'); }
+    if (c.state === 'eating' && c.timer >= FIRST_BITE_TICK && !biteFlagged.has(c.id)) { biteFlagged.add(c.id); spawnEmote(c.id, 'first-bite'); }
     if (c.state === 'waiting' && c.timer > 300 && !longWaitFlagged.has(c.id)) { longWaitFlagged.add(c.id); spawnEmote(c.id, 'waiting-long'); }
     if (prev === 'eating' && c.state === 'leaving') spawnEmote(c.id, 'leaving-happy');
     prevStates.set(c.id, c.state);
